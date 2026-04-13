@@ -1,0 +1,272 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchCompanies } from "./api/companies";
+import { DecisionMakersModal } from "./components/DecisionMakersModal";
+import { COUNTRY_OPTIONS } from "./data/countries";
+import type { CompaniesResponse, DatePostedFilter } from "./types/zileo";
+import "./App.css";
+
+const DEFAULT_KEYWORDS = [
+  "javascript",
+  "fullstack",
+  "frontend",
+  "backend",
+  "ai engineer",
+  "Node.js",
+  "npm",
+  "webpack",
+  "Redux",
+  "React Native",
+  "Virtual DOM",
+  "TypeScript",
+  "Vercel",
+  "DynamoDB",
+  "EC2",
+  "S3",
+  "AWS",
+  "Azure",
+  "Google Cloud Platform",
+  "Kubernetes",
+  "C#",
+  ".NET",
+  "Python",
+  "ASP.NET",
+];
+
+function parseKeywords(input: string): string[] {
+  return input
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function clampPage(raw: string): number {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return n;
+}
+
+function clampLimit(raw: string): number {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 10;
+  return Math.min(100, n);
+}
+
+export default function App() {
+  const [datePosted, setDatePosted] = useState<DatePostedFilter>("ONE_DAY_AGO");
+  const [pageInput, setPageInput] = useState("1");
+  const [limitInput, setLimitInput] = useState("10");
+  const [country, setCountry] = useState("Australia");
+  const [keywordsText, setKeywordsText] = useState(DEFAULT_KEYWORDS.join(", "));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<CompaniesResponse | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [decisionModalOpen, setDecisionModalOpen] = useState(false);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [result]);
+
+  const rowIds = useMemo(() => result?.data.map((c) => c.id) ?? [], [result]);
+
+  const allSelected =
+    rowIds.length > 0 && rowIds.every((id) => selectedIds.has(id));
+
+  const toggleRow = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    if (!rowIds.length) return;
+    setSelectedIds((prev) => {
+      if (rowIds.every((id) => prev.has(id))) return new Set();
+      return new Set(rowIds);
+    });
+  }, [rowIds]);
+
+  const selectedOrgNames = useMemo(() => {
+    if (!result) return [];
+    return result.data
+      .filter((c) => selectedIds.has(c.id))
+      .map((c) => c.name.trim())
+      .filter(Boolean);
+  }, [result, selectedIds]);
+
+  const runSearch = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const page = clampPage(pageInput);
+    const limit = clampLimit(limitInput);
+    try {
+      const data = await fetchCompanies({
+        datePosted,
+        page,
+        limit,
+        keywords: parseKeywords(keywordsText),
+        ...(country.trim() ? { country: country.trim() } : {}),
+      });
+      setResult(data);
+    } catch (e) {
+      setResult(null);
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [country, datePosted, keywordsText, limitInput, pageInput]);
+
+  const totalPages =
+    result && result.meta.limit > 0
+      ? Math.max(1, Math.ceil(result.meta.total / result.meta.limit))
+      : 0;
+
+  return (
+    <div className="app">
+      <header className="header">
+        <h1>Zileo Exporter</h1>
+        <p className="subtitle">Công ty đăng tin gần đây</p>
+      </header>
+
+      <section className="panel">
+        <div className="grid">
+          <label className="field">
+            <span>Thời gian đăng tin</span>
+            <select
+              value={datePosted}
+              onChange={(e) =>
+                setDatePosted(e.target.value as DatePostedFilter)
+              }
+            >
+              <option value="ONE_DAY_AGO">24 giờ qua</option>
+              <option value="ONE_WEEK_AGO">7 ngày qua</option>
+              <option value="ONE_MONTH_AGO">30 ngày qua</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Quốc gia</span>
+            <select
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+            >
+              <option value="">— Không chọn —</option>
+              {COUNTRY_OPTIONS.map((c) => (
+                <option key={c.value} value={c.label}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Trang</span>
+            <input
+              type="number"
+              min={1}
+              inputMode="numeric"
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              onBlur={() => setPageInput(String(clampPage(pageInput)))}
+            />
+          </label>
+          <label className="field">
+            <span>Giới hạn / trang</span>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              inputMode="numeric"
+              value={limitInput}
+              onChange={(e) => setLimitInput(e.target.value)}
+              onBlur={() => setLimitInput(String(clampLimit(limitInput)))}
+            />
+          </label>
+        </div>
+        <label className="field full">
+          <span>Từ khóa (phân tách bằng dấu phẩy hoặc xuống dòng)</span>
+          <textarea
+            rows={3}
+            value={keywordsText}
+            onChange={(e) => setKeywordsText(e.target.value)}
+          />
+        </label>
+        <div className="actions">
+          <button type="button" onClick={runSearch} disabled={loading}>
+            {loading ? "Đang tải…" : "Tìm công ty"}
+          </button>
+        </div>
+      </section>
+
+      {error && <div className="error">{error}</div>}
+
+      {result && (
+        <section className="results">
+          <div className="meta-bar meta-bar-row">
+            <span>
+              Trang {result.meta.page} / {totalPages || "—"} · Hiển thị{" "}
+              {result.data.length} / {result.meta.total} công ty
+            </span>
+            <button
+              type="button"
+              className="btn-export"
+              disabled={selectedIds.size === 0}
+              onClick={() => setDecisionModalOpen(true)}
+            >
+              Export Decision Makers
+            </button>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th className="th-check">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      aria-label="Chọn tất cả trang này"
+                    />
+                  </th>
+                  <th>Tên</th>
+                  <th>ID</th>
+                  <th>Job mới nhất</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.data.map((c) => (
+                  <tr key={c.id}>
+                    <td className="td-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(c.id)}
+                        onChange={() => toggleRow(c.id)}
+                        aria-label={`Chọn ${c.name}`}
+                      />
+                    </td>
+                    <td className="name">{c.name}</td>
+                    <td className="mono">{c.id}</td>
+                    <td>
+                      {new Date(c.latestJobPostedAt).toLocaleString("vi-VN", {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      <DecisionMakersModal
+        open={decisionModalOpen}
+        organizationNames={selectedOrgNames}
+        countryLabel={country}
+        onClose={() => setDecisionModalOpen(false)}
+      />
+    </div>
+  );
+}

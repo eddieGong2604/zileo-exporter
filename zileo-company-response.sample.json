@@ -1,0 +1,69 @@
+{
+    "data": [
+        {
+            "id": "Yolk Digital",
+            "name": "Yolk Digital",
+            "logoUrl": "linkedin-yolk-digital-australia_Yolk Digital.png",
+            "latestJobPostedAt": "2026-04-10T10:58:04.000Z"
+        },
+        {
+            "id": "BruntWork",
+            "name": "BruntWork",
+            "logoUrl": "linkedin-bruntworkcareers_BruntWork.png",
+            "latestJobPostedAt": "2026-04-10T10:40:16.000Z"
+        },
+        {
+            "id": "Heidi",
+            "name": "Heidi",
+            "logoUrl": "linkedin-heidi_Heidi.png",
+            "latestJobPostedAt": "2026-04-10T10:39:28.000Z"
+        },
+        {
+            "id": "Canva",
+            "name": "Canva",
+            "logoUrl": "linkedin-canva_Canva.png",
+            "latestJobPostedAt": "2026-04-10T10:17:01.000Z"
+        },
+        {
+            "id": "Latitude IT",
+            "name": "Latitude IT",
+            "logoUrl": "linkedin-latitudeit_Latitude IT.png",
+            "latestJobPostedAt": "2026-04-10T09:39:36.000Z"
+        },
+        {
+            "id": "Square D Company",
+            "name": "Square D Company",
+            "logoUrl": "linkedin-squaredcompany_Square D Company.png",
+            "latestJobPostedAt": "2026-04-10T09:30:50.000Z"
+        },
+        {
+            "id": "Paxus",
+            "name": "Paxus",
+            "logoUrl": "linkedin-paxus_Paxus.png",
+            "latestJobPostedAt": "2026-04-10T08:56:12.000Z"
+        },
+        {
+            "id": "Peoplebank",
+            "name": "Peoplebank",
+            "logoUrl": "linkedin-peoplebank_Peoplebank.png",
+            "latestJobPostedAt": "2026-04-10T07:58:12.000Z"
+        },
+        {
+            "id": "Clicks IT Recruitment",
+            "name": "Clicks IT Recruitment",
+            "logoUrl": "linkedin-clicks-it-recruitment_Clicks IT Recruitment.png",
+            "latestJobPostedAt": "2026-04-10T07:51:20.000Z"
+        },
+        {
+            "id": "Are Media Pty Ltd",
+            "name": "Are Media Pty Ltd",
+            "logoUrl": "linkedin-aremediaau_Are Media Pty Ltd.png",
+            "latestJobPostedAt": "2026-04-10T07:47:12.000Z"
+        }
+    ],
+    "meta": {
+        "page": 1,
+        "limit": 10,
+        "total": 40
+    }
+}

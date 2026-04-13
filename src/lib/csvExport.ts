@@ -1,0 +1,81 @@
+import type { ApolloPersonEnriched } from "../types/apollo";
+
+/** Ngày giờ theo UTC+7 (Asia/Ho_Chi_Minh), dùng cho tên file: `yyyy-mm-dd_HH-mm-ss`. */
+export function formatFilenameTimestampUtcPlus7(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "00";
+
+  const y = get("year");
+  const mo = get("month");
+  const d = get("day");
+  const h = get("hour");
+  const mi = get("minute");
+  const s = get("second");
+  return `${y}-${mo}-${d}_${h}-${mi}-${s}`;
+}
+
+/** Theo temp_import.csv, không có Employees Count. */
+const HEADER = "First Name,Company Name,Email,LinkedIn,Country";
+
+function escapeCsvCell(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+function row(
+  firstName: string,
+  company: string,
+  email: string,
+  linkedIn: string,
+  country: string,
+): string {
+  return [
+    escapeCsvCell(firstName),
+    escapeCsvCell(company),
+    escapeCsvCell(email),
+    escapeCsvCell(linkedIn),
+    escapeCsvCell(country),
+  ].join(",");
+}
+
+export function buildDecisionMakersCsv(
+  people: ApolloPersonEnriched[],
+  countryLabel: string,
+): string {
+  const lines = [HEADER];
+  const country = countryLabel.trim();
+  for (const p of people) {
+    const first = (p.first_name ?? "").trim();
+    const company = (p.organization?.name ?? "").trim();
+    const email = (p.email ?? "").trim();
+    const linkedin = (p.linkedin_url ?? "").trim();
+    lines.push(row(first, company, email, linkedin, country));
+  }
+  return lines.join("\r\n");
+}
+
+export function downloadTextFile(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
