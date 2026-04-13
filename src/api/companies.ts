@@ -26,5 +26,9 @@ export async function fetchCompanies(
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }
-  return res.json() as Promise<CompaniesResponse>;
+  const raw = (await res.json()) as CompaniesResponse;
+  const data = raw.data.filter((c) => {
+    return c.id.trim().length > 0 && c.name.trim().length > 0;
+  });
+  return { ...raw, data };
 }

@@ -1,4 +1,5 @@
 import type { ApolloPersonEnriched } from "../types/apollo";
+import type { Company } from "../types/zileo";
 
 /** Ngày giờ theo UTC+7 (Asia/Ho_Chi_Minh), dùng cho tên file: `yyyy-mm-dd_HH-mm-ss`. */
 export function formatFilenameTimestampUtcPlus7(date = new Date()): string {
@@ -63,6 +64,22 @@ export function buildDecisionMakersCsv(
     const email = (p.email ?? "").trim();
     const linkedin = (p.linkedin_url ?? "").trim();
     lines.push(row(first, company, email, linkedin, country));
+  }
+  return lines.join("\r\n");
+}
+
+const COMPANY_HEADER = "Company Name,Company ID,Latest Job Posted At";
+
+export function buildCompaniesCsv(companies: Company[]): string {
+  const lines = [COMPANY_HEADER];
+  for (const c of companies) {
+    lines.push(
+      [
+        escapeCsvCell((c.name ?? "").trim()),
+        escapeCsvCell((c.id ?? "").trim()),
+        escapeCsvCell((c.latestJobPostedAt ?? "").trim()),
+      ].join(","),
+    );
   }
   return lines.join("\r\n");
 }

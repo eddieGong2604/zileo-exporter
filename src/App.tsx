@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCompanies } from "./api/companies";
 import { DecisionMakersModal } from "./components/DecisionMakersModal";
 import { COUNTRY_OPTIONS } from "./data/countries";
+import {
+  buildCompaniesCsv,
+  downloadTextFile,
+  formatFilenameTimestampUtcPlus7,
+} from "./lib/csvExport";
 import type { CompaniesResponse, DatePostedFilter } from "./types/zileo";
 import "./App.css";
 
@@ -119,10 +124,47 @@ export default function App() {
     }
   }, [country, datePosted, keywordsText, limitInput, pageInput]);
 
+  const runPageSearch = useCallback(
+    async (nextPage: number) => {
+      const safePage = Math.max(1, nextPage);
+      setPageInput(String(safePage));
+      setLoading(true);
+      setError(null);
+      const limit = clampLimit(limitInput);
+      try {
+        const data = await fetchCompanies({
+          datePosted,
+          page: safePage,
+          limit,
+          keywords: parseKeywords(keywordsText),
+          ...(country.trim() ? { country: country.trim() } : {}),
+        });
+        setResult(data);
+      } catch (e) {
+        setResult(null);
+        setError(e instanceof Error ? e.message : "Request failed");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [country, datePosted, keywordsText, limitInput],
+  );
+
   const totalPages =
     result && result.meta.limit > 0
       ? Math.max(1, Math.ceil(result.meta.total / result.meta.limit))
       : 0;
+
+  const exportCompanies = useCallback(() => {
+    const selectedRows =
+      result?.data.filter((c) => selectedIds.has(c.id)) ?? [];
+    const rows = selectedRows.length ? selectedRows : (result?.data ?? []);
+    if (!rows.length) return;
+    const csv = buildCompaniesCsv(rows);
+    const scope = selectedRows.length ? "selected" : "page";
+    const stamp = formatFilenameTimestampUtcPlus7();
+    downloadTextFile(`companies_${scope}_${stamp}.csv`, csv);
+  }, [result, selectedIds]);
 
   return (
     <div className="app">
@@ -208,13 +250,46 @@ export default function App() {
               Trang {result.meta.page} / {totalPages || "—"} · Hiển thị{" "}
               {result.data.length} / {result.meta.total} công ty
             </span>
+            <div className="meta-actions">
+              <button
+                type="button"
+                className="btn-export-company"
+                disabled={result.data.length === 0}
+                onClick={exportCompanies}
+              >
+                Export Companies CSV
+              </button>
+              <button
+                type="button"
+                className="btn-export"
+                disabled={selectedIds.size === 0}
+                onClick={() => setDecisionModalOpen(true)}
+              >
+                Export Decision Makers
+              </button>
+            </div>
+          </div>
+          <div className="pager">
             <button
               type="button"
-              className="btn-export"
-              disabled={selectedIds.size === 0}
-              onClick={() => setDecisionModalOpen(true)}
+              className="pager-btn"
+              disabled={loading || result.meta.page <= 1}
+              onClick={() => void runPageSearch(result.meta.page - 1)}
             >
-              Export Decision Makers
+              Prev
+            </button>
+            <span className="pager-text">
+              Page {result.meta.page} / {totalPages || 1}
+            </span>
+            <button
+              type="button"
+              className="pager-btn"
+              disabled={
+                loading || (totalPages > 0 && result.meta.page >= totalPages)
+              }
+              onClick={() => void runPageSearch(result.meta.page + 1)}
+            >
+              Next
             </button>
           </div>
           <div className="table-wrap">
