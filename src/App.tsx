@@ -305,7 +305,7 @@ export default function App() {
                     />
                   </th>
                   <th>Tên</th>
-                  <th>ID</th>
+                  <th>LinkedIn</th>
                   <th>Job mới nhất</th>
                 </tr>
               </thead>
@@ -321,7 +321,16 @@ export default function App() {
                       />
                     </td>
                     <td className="name">{c.name}</td>
-                    <td className="mono">{c.id}</td>
+                    <td>
+                      <a
+                        className="linkedin-search-link"
+                        href={c.linkedinSearchUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Tìm công ty
+                      </a>
+                    </td>
                     <td>
                       {new Date(c.latestJobPostedAt).toLocaleString("vi-VN", {
                         dateStyle: "short",

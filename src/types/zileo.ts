@@ -8,7 +8,12 @@ export interface Company {
   name: string;
   logoUrl: string;
   latestJobPostedAt: string;
+  /** URL tìm công ty trên LinkedIn (bổ sung phía client sau khi gọi API). */
+  linkedinSearchUrl: string;
 }
+
+/** Bản ghi công ty từ API Zileo (chưa có URL LinkedIn). */
+export type CompanyFromApi = Omit<Company, "linkedinSearchUrl">;
 
 export interface CompaniesMeta {
   page: number;

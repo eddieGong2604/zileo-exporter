@@ -68,7 +68,8 @@ export function buildDecisionMakersCsv(
   return lines.join("\r\n");
 }
 
-const COMPANY_HEADER = "Company Name,Company ID,Latest Job Posted At";
+const COMPANY_HEADER =
+  "Company Name,Company ID,Latest Job Posted At,LinkedIn Search URL";
 
 export function buildCompaniesCsv(companies: Company[]): string {
   const lines = [COMPANY_HEADER];
@@ -78,6 +79,7 @@ export function buildCompaniesCsv(companies: Company[]): string {
         escapeCsvCell((c.name ?? "").trim()),
         escapeCsvCell((c.id ?? "").trim()),
         escapeCsvCell((c.latestJobPostedAt ?? "").trim()),
+        escapeCsvCell((c.linkedinSearchUrl ?? "").trim()),
       ].join(","),
     );
   }

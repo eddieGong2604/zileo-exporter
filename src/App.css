@@ -162,6 +162,10 @@ tr:last-child td {
   font-weight: 500;
 }
 
+.linkedin-search-link {
+  white-space: nowrap;
+}
+
 .mono {
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
