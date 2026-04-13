@@ -1,4 +1,4 @@
-export const config = { runtime: "edge" as const };
+export const config = { runtime: "edge" };
 
 const UPSTREAM = "https://api.zileo.io/opensearch/companies";
 

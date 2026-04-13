@@ -1,4 +1,4 @@
-export const config = { runtime: "edge" as const };
+export const config = { runtime: "edge" };
 
 const UPSTREAM = "https://api.apollo.io/api/v1/mixed_people/api_search";
 
