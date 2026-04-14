@@ -1,4 +1,4 @@
-import { revealCompanyWithOpenAI } from "../lib/revealCompanyOpenAI";
+import { revealCompanyWithOpenAI } from "./revealCompanyOpenAI";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 export const config = { runtime: "nodejs" };
