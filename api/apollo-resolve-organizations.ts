@@ -1,7 +1,6 @@
 export const config = { runtime: "nodejs" };
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readJsonBody, sendJson } from "./_nodeHttp";
 
 function firstOrganizationId(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
@@ -14,6 +13,28 @@ function firstOrganizationId(data: unknown): string | null {
 }
 
 const UPSTREAM = "https://api.apollo.io/api/v1/mixed_companies/search";
+
+async function readRawBody(req: IncomingMessage): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer | string) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
+  const raw = await readRawBody(req);
+  return JSON.parse(raw) as T;
+}
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(payload));
+}
 
 type Body = { names: string[] };
 
