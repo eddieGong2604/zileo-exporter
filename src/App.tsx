@@ -311,7 +311,7 @@ export default function App() {
               >
                 Export Companies CSV
               </button>
-              <button
+              {/* <button
                 type="button"
                 className="btn-reveal-company"
                 disabled={
@@ -320,7 +320,7 @@ export default function App() {
                 onClick={() => void revealCompanies()}
               >
                 {revealRunning ? "Checking…" : "Reveal Company Information"}
-              </button>
+              </button> */}
               <button
                 type="button"
                 className="btn-export"
@@ -399,9 +399,7 @@ export default function App() {
                               ·
                             </span>{" "}
                             {rev.loading ? (
-                              <span className="reveal-muted">
-                                Checking…
-                              </span>
+                              <span className="reveal-muted">Checking…</span>
                             ) : rev.error ? (
                               <span className="reveal-error">{rev.error}</span>
                             ) : (
@@ -463,13 +461,10 @@ export default function App() {
                         )}
                       </td>
                       <td>
-                        {new Date(c.latestJobPostedAt).toLocaleString(
-                          "vi-VN",
-                          {
-                            dateStyle: "short",
-                            timeStyle: "short",
-                          },
-                        )}
+                        {new Date(c.latestJobPostedAt).toLocaleString("vi-VN", {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}
                       </td>
                     </tr>
                   );
