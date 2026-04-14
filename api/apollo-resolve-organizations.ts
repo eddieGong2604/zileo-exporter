@@ -1,4 +1,4 @@
-export const config = { runtime: "edge" };
+export const config = { runtime: "nodejs" };
 
 function firstOrganizationId(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
