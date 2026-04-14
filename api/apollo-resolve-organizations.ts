@@ -1,4 +1,4 @@
-export const config = { runtime: "edge" };
+export const config = { runtime: "nodejs" };
 
 function firstOrganizationId(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
@@ -40,7 +40,9 @@ export default async function handler(request: Request): Promise<Response> {
     });
   }
 
-  const names = [...new Set((body.names ?? []).map((n) => n.trim()).filter(Boolean))];
+  const names = [
+    ...new Set((body.names ?? []).map((n) => n.trim()).filter(Boolean)),
+  ];
   if (!names.length) {
     return new Response(JSON.stringify({ error: "names is required" }), {
       status: 400,
@@ -93,11 +95,8 @@ export default async function handler(request: Request): Promise<Response> {
     }
   }
 
-  return new Response(
-    JSON.stringify({ organization_ids, unresolved_names }),
-    {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    },
-  );
+  return new Response(JSON.stringify({ organization_ids, unresolved_names }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }

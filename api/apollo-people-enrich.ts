@@ -1,4 +1,4 @@
-export const config = { runtime: "edge" };
+export const config = { runtime: "nodejs" };
 
 const UPSTREAM = "https://api.apollo.io/api/v1/people/bulk_match";
 
@@ -32,7 +32,9 @@ export default async function handler(request: Request): Promise<Response> {
     });
   }
 
-  const ids = [...new Set((body.ids ?? []).map((id) => id.trim()).filter(Boolean))];
+  const ids = [
+    ...new Set((body.ids ?? []).map((id) => id.trim()).filter(Boolean)),
+  ];
   if (!ids.length) {
     return new Response(JSON.stringify({ matches: [] }), {
       status: 200,

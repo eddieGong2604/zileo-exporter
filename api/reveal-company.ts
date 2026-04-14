@@ -1,6 +1,6 @@
 import { revealCompanyWithOpenAI } from "../lib/revealCompanyOpenAI";
 
-export const config = { runtime: "edge" };
+export const config = { runtime: "nodejs" };
 
 export default async function handler(request: Request): Promise<Response> {
   if (request.method !== "POST") {
@@ -20,7 +20,10 @@ export default async function handler(request: Request): Promise<Response> {
 
   let body: { companyName?: string; countryHint?: string };
   try {
-    body = (await request.json()) as { companyName?: string; countryHint?: string };
+    body = (await request.json()) as {
+      companyName?: string;
+      countryHint?: string;
+    };
   } catch {
     return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
       status: 400,
