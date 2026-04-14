@@ -69,15 +69,18 @@ export function buildDecisionMakersCsv(
 }
 
 const COMPANY_HEADER =
-  "Company Name,Company ID,Latest Job Posted At,LinkedIn Search URL";
+  "Company Name,Company ID,Country,Job Source URLs,Latest Job Posted At,LinkedIn Search URL";
 
 export function buildCompaniesCsv(companies: Company[]): string {
   const lines = [COMPANY_HEADER];
   for (const c of companies) {
+    const jobUrls = (c.jobs?.source ?? []).filter(Boolean).join(" | ");
     lines.push(
       [
         escapeCsvCell((c.name ?? "").trim()),
         escapeCsvCell((c.id ?? "").trim()),
+        escapeCsvCell((c.country ?? "").trim()),
+        escapeCsvCell(jobUrls),
         escapeCsvCell((c.latestJobPostedAt ?? "").trim()),
         escapeCsvCell((c.linkedinSearchUrl ?? "").trim()),
       ].join(","),

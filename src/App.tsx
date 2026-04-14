@@ -319,7 +319,7 @@ export default function App() {
                 }
                 onClick={() => void revealCompanies()}
               >
-                {revealRunning ? "Đang tra…" : "Reveal Company Information"}
+                {revealRunning ? "Checking…" : "Reveal Company Information"}
               </button>
               <button
                 type="button"
@@ -359,15 +359,19 @@ export default function App() {
               <thead>
                 <tr>
                   <th className="th-check">
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleSelectAll}
-                      aria-label="Chọn tất cả trang này"
-                    />
+                    <span className="check-cell">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleSelectAll}
+                        aria-label="Chọn tất cả trang này"
+                      />
+                    </span>
                   </th>
                   <th>Tên</th>
+                  <th>Quốc gia</th>
                   <th>LinkedIn</th>
+                  <th>Tin tuyển dụng</th>
                   <th>Job mới nhất</th>
                 </tr>
               </thead>
@@ -377,12 +381,14 @@ export default function App() {
                   return (
                     <tr key={c.id}>
                       <td className="td-check">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(c.id)}
-                          onChange={() => toggleRow(c.id)}
-                          aria-label={`Chọn ${c.name}`}
-                        />
+                        <span className="check-cell">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(c.id)}
+                            onChange={() => toggleRow(c.id)}
+                            aria-label={`Chọn ${c.name}`}
+                          />
+                        </span>
                       </td>
                       <td className="name name-with-reveal">
                         <span className="name-text">{c.name}</span>
@@ -394,7 +400,7 @@ export default function App() {
                             </span>{" "}
                             {rev.loading ? (
                               <span className="reveal-muted">
-                                Đang tra…
+                                Checking…
                               </span>
                             ) : rev.error ? (
                               <span className="reveal-error">{rev.error}</span>
@@ -423,6 +429,9 @@ export default function App() {
                           </span>
                         ) : null}
                       </td>
+                      <td className="td-country">
+                        {(c.country ?? "").trim() || "—"}
+                      </td>
                       <td>
                         <a
                           className="linkedin-search-link"
@@ -432,6 +441,26 @@ export default function App() {
                         >
                           Tìm công ty
                         </a>
+                      </td>
+                      <td className="td-job-sources">
+                        {c.jobs?.source && c.jobs.source.length > 0 ? (
+                          <ul className="job-source-list">
+                            {c.jobs.source.map((url, i) => (
+                              <li key={`${c.id}-job-${i}`}>
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="job-source-link"
+                                >
+                                  Tin {i + 1}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td>
                         {new Date(c.latestJobPostedAt).toLocaleString(

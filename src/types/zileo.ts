@@ -3,10 +3,18 @@ export type DatePostedFilter =
   | "ONE_WEEK_AGO"
   | "ONE_MONTH_AGO";
 
+export interface CompanyJobs {
+  /** URL các tin tuyển dụng (vd. Indeed) từ API. */
+  source?: string[];
+}
+
 export interface Company {
   id: string;
   name: string;
   logoUrl: string;
+  /** Quốc gia công ty (từ API). */
+  country?: string;
+  jobs?: CompanyJobs;
   latestJobPostedAt: string;
   /** URL tìm công ty trên LinkedIn (bổ sung phía client sau khi gọi API). */
   linkedinSearchUrl: string;

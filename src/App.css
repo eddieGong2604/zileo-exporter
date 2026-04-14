@@ -148,6 +148,16 @@ td {
   vertical-align: top;
 }
 
+/* Checkbox + cột tên cùng căn giữa theo chiều dọc (không lệch so với dòng chữ). */
+.results table thead th {
+  vertical-align: middle;
+}
+
+.results table tbody td.td-check,
+.results table tbody td.name-with-reveal {
+  vertical-align: middle;
+}
+
 th {
   background: #fff;
   font-weight: 600;
@@ -185,6 +195,37 @@ tr:last-child td {
 
 .linkedin-search-link {
   white-space: nowrap;
+}
+
+.td-country {
+  color: #475569;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.td-job-sources {
+  font-size: 0.8rem;
+  min-width: 5.5rem;
+}
+
+.job-source-list {
+  margin: 0;
+  padding-left: 1rem;
+  list-style: disc;
+}
+
+.job-source-list li {
+  margin: 0.1rem 0;
+}
+
+.job-source-link {
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.job-source-link:hover {
+  color: #1e40af;
 }
 
 .mono {
@@ -347,13 +388,24 @@ tr:last-child td {
   width: 2.5rem;
   padding-left: 0.75rem !important;
   padding-right: 0.35rem !important;
-  vertical-align: middle;
+  vertical-align: middle !important;
+  text-align: center;
+  line-height: 1;
+}
+
+.check-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 1.15rem;
 }
 
 .th-check input,
 .td-check input {
   width: 1rem;
   height: 1rem;
+  margin: 0;
   cursor: pointer;
 }
 
