@@ -1,4 +1,6 @@
-export const config = { runtime: "nodejs" };
+export const config = { runtime: "edge" };
+export const preferredRegion = ["iad1", "sin1"];
+export const dynamic = "force-dynamic";
 
 const UPSTREAM = "https://api.zileo.io/opensearch/companies";
 
