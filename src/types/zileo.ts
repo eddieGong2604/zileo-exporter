@@ -33,3 +33,19 @@ export interface CompaniesSearchBody {
   keywords: string[];
   country?: string;
 }
+
+/** Kết quả reveal từ OpenAI (web search) — đồng bộ với JSON API `/api/reveal-company`. */
+export interface CompanyRevealResult {
+  companySize: string;
+  isHeadhunt: boolean;
+  isOutsource: boolean;
+}
+
+/** State UI cho một dòng reveal (có thể đang tải hoặc lỗi). */
+export interface CompanyRevealRowState {
+  loading: boolean;
+  companySize?: string;
+  isHeadhunt?: boolean;
+  isOutsource?: boolean;
+  error?: string;
+}

@@ -162,6 +162,27 @@ tr:last-child td {
   font-weight: 500;
 }
 
+.name-with-reveal {
+  line-height: 1.45;
+}
+
+.name-with-reveal .name-text {
+  font-weight: 500;
+  color: #0f172a;
+}
+
+.reveal-inline {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: #475569;
+  white-space: normal;
+}
+
+.reveal-sep {
+  color: #cbd5e1;
+  font-weight: 400;
+}
+
 .linkedin-search-link {
   white-space: nowrap;
 }
@@ -227,6 +248,68 @@ tr:last-child td {
 .btn-export-company:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-reveal-company {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid #7c3aed;
+  border-radius: 8px;
+  background: #fff;
+  color: #6d28d9;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-reveal-company:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reveal-muted {
+  color: #64748b;
+  font-style: italic;
+}
+
+.reveal-error {
+  color: #b91c1c;
+  font-size: inherit;
+}
+
+.reveal-size strong {
+  font-weight: 600;
+  color: #334155;
+}
+
+.name-with-reveal .reveal-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: 0.35rem;
+  vertical-align: middle;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  letter-spacing: 0.01em;
+}
+
+.badge-headhunt {
+  background: #ede9fe;
+  color: #5b21b6;
+  border: 1px solid #c4b5fd;
+}
+
+.badge-outsource {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #7dd3fc;
 }
 
 .pager {

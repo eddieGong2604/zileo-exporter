@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCompanies } from "./api/companies";
+import { fetchCompanyReveal } from "./api/revealCompany";
 import { DecisionMakersModal } from "./components/DecisionMakersModal";
 import { COUNTRY_OPTIONS } from "./data/countries";
 import {
@@ -7,7 +8,11 @@ import {
   downloadTextFile,
   formatFilenameTimestampUtcPlus7,
 } from "./lib/csvExport";
-import type { CompaniesResponse, DatePostedFilter } from "./types/zileo";
+import type {
+  CompaniesResponse,
+  CompanyRevealRowState,
+  DatePostedFilter,
+} from "./types/zileo";
 import "./App.css";
 
 const DEFAULT_KEYWORDS = [
@@ -67,9 +72,17 @@ export default function App() {
   const [result, setResult] = useState<CompaniesResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [decisionModalOpen, setDecisionModalOpen] = useState(false);
+  const [revealById, setRevealById] = useState<
+    Record<string, CompanyRevealRowState>
+  >({});
+  const [revealRunning, setRevealRunning] = useState(false);
 
   useEffect(() => {
     setSelectedIds(new Set());
+  }, [result]);
+
+  useEffect(() => {
+    setRevealById({});
   }, [result]);
 
   const rowIds = useMemo(() => result?.data.map((c) => c.id) ?? [], [result]);
@@ -166,6 +179,45 @@ export default function App() {
     downloadTextFile(`companies_${scope}_${stamp}.csv`, csv);
   }, [result, selectedIds]);
 
+  const revealCompanies = useCallback(async () => {
+    if (!result?.data.length) return;
+    const selectedRows = result.data.filter((c) => selectedIds.has(c.id));
+    const rows = selectedRows.length ? selectedRows : result.data;
+    const countryHint = country.trim() || undefined;
+
+    const initial: Record<string, CompanyRevealRowState> = {};
+    for (const c of rows) {
+      initial[c.id] = { loading: true };
+    }
+    setRevealById((prev) => ({ ...prev, ...initial }));
+    setRevealRunning(true);
+
+    for (const c of rows) {
+      try {
+        const data = await fetchCompanyReveal({
+          companyName: c.name,
+          countryHint,
+        });
+        setRevealById((prev) => ({
+          ...prev,
+          [c.id]: {
+            loading: false,
+            companySize: data.companySize,
+            isHeadhunt: data.isHeadhunt,
+            isOutsource: data.isOutsource,
+          },
+        }));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Request failed";
+        setRevealById((prev) => ({
+          ...prev,
+          [c.id]: { loading: false, error: msg },
+        }));
+      }
+    }
+    setRevealRunning(false);
+  }, [country, result, selectedIds]);
+
   return (
     <div className="app">
       <header className="header">
@@ -261,6 +313,16 @@ export default function App() {
               </button>
               <button
                 type="button"
+                className="btn-reveal-company"
+                disabled={
+                  result.data.length === 0 || loading || revealRunning
+                }
+                onClick={() => void revealCompanies()}
+              >
+                {revealRunning ? "Đang tra…" : "Reveal Company Information"}
+              </button>
+              <button
+                type="button"
                 className="btn-export"
                 disabled={selectedIds.size === 0}
                 onClick={() => setDecisionModalOpen(true)}
@@ -310,35 +372,79 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {result.data.map((c) => (
-                  <tr key={c.id}>
-                    <td className="td-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(c.id)}
-                        onChange={() => toggleRow(c.id)}
-                        aria-label={`Chọn ${c.name}`}
-                      />
-                    </td>
-                    <td className="name">{c.name}</td>
-                    <td>
-                      <a
-                        className="linkedin-search-link"
-                        href={c.linkedinSearchUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        Tìm công ty
-                      </a>
-                    </td>
-                    <td>
-                      {new Date(c.latestJobPostedAt).toLocaleString("vi-VN", {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                      })}
-                    </td>
-                  </tr>
-                ))}
+                {result.data.map((c) => {
+                  const rev = revealById[c.id];
+                  return (
+                    <tr key={c.id}>
+                      <td className="td-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(c.id)}
+                          onChange={() => toggleRow(c.id)}
+                          aria-label={`Chọn ${c.name}`}
+                        />
+                      </td>
+                      <td className="name name-with-reveal">
+                        <span className="name-text">{c.name}</span>
+                        {rev ? (
+                          <span className="reveal-inline">
+                            {" "}
+                            <span className="reveal-sep" aria-hidden="true">
+                              ·
+                            </span>{" "}
+                            {rev.loading ? (
+                              <span className="reveal-muted">
+                                Đang tra…
+                              </span>
+                            ) : rev.error ? (
+                              <span className="reveal-error">{rev.error}</span>
+                            ) : (
+                              <>
+                                <span className="reveal-size">
+                                  Quy mô:{" "}
+                                  <strong>{rev.companySize ?? "—"}</strong>
+                                </span>
+                                {(rev.isHeadhunt || rev.isOutsource) && (
+                                  <span className="reveal-badges">
+                                    {rev.isHeadhunt && (
+                                      <span className="badge badge-headhunt">
+                                        Headhunt
+                                      </span>
+                                    )}
+                                    {rev.isOutsource && (
+                                      <span className="badge badge-outsource">
+                                        Outsourcing
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td>
+                        <a
+                          className="linkedin-search-link"
+                          href={c.linkedinSearchUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Tìm công ty
+                        </a>
+                      </td>
+                      <td>
+                        {new Date(c.latestJobPostedAt).toLocaleString(
+                          "vi-VN",
+                          {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          },
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
