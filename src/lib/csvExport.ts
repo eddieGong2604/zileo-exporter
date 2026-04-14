@@ -1,6 +1,12 @@
 import type { ApolloPersonEnriched } from "../types/apollo";
 import type { Company } from "../types/zileo";
 
+type CompanyRevealForExport = {
+  companySize?: string;
+  isHeadhunt?: boolean;
+  isOutsource?: boolean;
+};
+
 /** Ngày giờ theo UTC+7 (Asia/Ho_Chi_Minh), dùng cho tên file: `yyyy-mm-dd_HH-mm-ss`. */
 export function formatFilenameTimestampUtcPlus7(date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -69,18 +75,25 @@ export function buildDecisionMakersCsv(
 }
 
 const COMPANY_HEADER =
-  "Company Name,Company ID,Country,Job Source URLs,Latest Job Posted At,LinkedIn Search URL";
+  "Company Name,Company ID,Country,Job Source URLs,Company Size,Is Headhunt,Is Outsourcing,Latest Job Posted At,LinkedIn Search URL";
 
-export function buildCompaniesCsv(companies: Company[]): string {
+export function buildCompaniesCsv(
+  companies: Company[],
+  revealById?: Record<string, CompanyRevealForExport>,
+): string {
   const lines = [COMPANY_HEADER];
   for (const c of companies) {
     const jobUrls = (c.jobs?.source ?? []).filter(Boolean).join(" | ");
+    const reveal = revealById?.[c.id];
     lines.push(
       [
         escapeCsvCell((c.name ?? "").trim()),
         escapeCsvCell((c.id ?? "").trim()),
         escapeCsvCell((c.country ?? "").trim()),
         escapeCsvCell(jobUrls),
+        escapeCsvCell((reveal?.companySize ?? "").trim()),
+        escapeCsvCell(String(Boolean(reveal?.isHeadhunt))),
+        escapeCsvCell(String(Boolean(reveal?.isOutsource))),
         escapeCsvCell((c.latestJobPostedAt ?? "").trim()),
         escapeCsvCell((c.linkedinSearchUrl ?? "").trim()),
       ].join(","),

@@ -173,11 +173,11 @@ export default function App() {
       result?.data.filter((c) => selectedIds.has(c.id)) ?? [];
     const rows = selectedRows.length ? selectedRows : (result?.data ?? []);
     if (!rows.length) return;
-    const csv = buildCompaniesCsv(rows);
+    const csv = buildCompaniesCsv(rows, revealById);
     const scope = selectedRows.length ? "selected" : "page";
     const stamp = formatFilenameTimestampUtcPlus7();
     downloadTextFile(`companies_${scope}_${stamp}.csv`, csv);
-  }, [result, selectedIds]);
+  }, [result, selectedIds, revealById]);
 
   const revealCompanies = useCallback(async () => {
     if (!result?.data.length) return;
