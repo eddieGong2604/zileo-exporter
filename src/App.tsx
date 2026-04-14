@@ -311,24 +311,28 @@ export default function App() {
               >
                 Export Companies CSV
               </button>
-              {/* <button
-                type="button"
-                className="btn-reveal-company"
-                disabled={
-                  result.data.length === 0 || loading || revealRunning
-                }
-                onClick={() => void revealCompanies()}
-              >
-                {revealRunning ? "Checking…" : "Reveal Company Information"}
-              </button> */}
-              <button
-                type="button"
-                className="btn-export"
-                disabled={selectedIds.size === 0}
-                onClick={() => setDecisionModalOpen(true)}
-              >
-                Export Decision Makers
-              </button>
+              {false && (
+                <>
+                  <button
+                    type="button"
+                    className="btn-reveal-company"
+                    disabled={
+                      result?.data.length === 0 || loading || revealRunning
+                    }
+                    onClick={() => void revealCompanies()}
+                  >
+                    {revealRunning ? "Checking…" : "Reveal Company Information"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-export"
+                    disabled={selectedIds.size === 0}
+                    onClick={() => setDecisionModalOpen(true)}
+                  >
+                    Export Decision Makers
+                  </button>{" "}
+                </>
+              )}
             </div>
           </div>
           <div className="pager">
