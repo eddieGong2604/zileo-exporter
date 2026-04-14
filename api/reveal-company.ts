@@ -1,42 +1,39 @@
 import { revealCompanyWithOpenAI } from "../lib/revealCompanyOpenAI";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { readJsonBody, sendJson } from "./_nodeHttp";
 
 export const config = { runtime: "nodejs" };
 
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+export default async function handler(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return new Response(
-      JSON.stringify({ error: "Missing OPENAI_API_KEY on server" }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    );
+    sendJson(res, 500, { error: "Missing OPENAI_API_KEY on server" });
+    return;
   }
 
   let body: { companyName?: string; countryHint?: string };
   try {
-    body = (await request.json()) as {
+    body = await readJsonBody<{
       companyName?: string;
       countryHint?: string;
-    };
+    }>(req);
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
   }
 
   const companyName = (body.companyName ?? "").trim();
   if (!companyName) {
-    return new Response(JSON.stringify({ error: "companyName is required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 400, { error: "companyName is required" });
+    return;
   }
 
   const countryHint = (body.countryHint ?? "").trim();
@@ -47,15 +44,9 @@ export default async function handler(request: Request): Promise<Response> {
       countryHint: countryHint || undefined,
       apiKey,
     });
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 200, result);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "OpenAI error";
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 502,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 502, { error: msg });
   }
 }

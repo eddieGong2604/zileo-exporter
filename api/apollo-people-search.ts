@@ -1,5 +1,8 @@
 export const config = { runtime: "nodejs" };
 
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { readJsonBody, sendJson } from "./_nodeHttp";
+
 const UPSTREAM = "https://api.apollo.io/api/v1/mixed_people/api_search";
 
 type Body = {
@@ -31,39 +34,34 @@ function buildQuery(body: Body): string {
   return params.toString();
 }
 
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+export default async function handler(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
   }
 
   const key = process.env.APOLLO_API_KEY;
   if (!key) {
-    return new Response(
-      JSON.stringify({ error: "Missing APOLLO_API_KEY on server" }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    );
+    sendJson(res, 500, { error: "Missing APOLLO_API_KEY on server" });
+    return;
   }
 
   let body: Body;
   try {
-    body = (await request.json()) as Body;
+    body = await readJsonBody<Body>(req);
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
   }
 
   if (!body.organization_ids?.length || !body.person_titles?.length) {
-    return new Response(
-      JSON.stringify({
-        error: "organization_ids and person_titles are required",
-      }),
-      { status: 400, headers: { "Content-Type": "application/json" } },
-    );
+    sendJson(res, 400, {
+      error: "organization_ids and person_titles are required",
+    });
+    return;
   }
 
   const qs = buildQuery(body);
@@ -81,11 +79,10 @@ export default async function handler(request: Request): Promise<Response> {
   });
 
   const text = await upstream.text();
-  const ct =
-    upstream.headers.get("content-type") ?? "application/json; charset=utf-8";
-
-  return new Response(text, {
-    status: upstream.status,
-    headers: { "Content-Type": ct },
-  });
+  res.statusCode = upstream.status;
+  res.setHeader(
+    "Content-Type",
+    upstream.headers.get("content-type") ?? "application/json; charset=utf-8",
+  );
+  res.end(text);
 }

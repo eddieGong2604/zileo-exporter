@@ -1,5 +1,8 @@
 export const config = { runtime: "nodejs" };
 
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { readJsonBody, sendJson } from "./_nodeHttp";
+
 function firstOrganizationId(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
@@ -14,40 +17,35 @@ const UPSTREAM = "https://api.apollo.io/api/v1/mixed_companies/search";
 
 type Body = { names: string[] };
 
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+export default async function handler(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
   }
 
   const key = process.env.APOLLO_API_KEY;
   if (!key) {
-    return new Response(
-      JSON.stringify({ error: "Missing APOLLO_API_KEY on server" }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    );
+    sendJson(res, 500, { error: "Missing APOLLO_API_KEY on server" });
+    return;
   }
 
   let body: Body;
   try {
-    body = (await request.json()) as Body;
+    body = await readJsonBody<Body>(req);
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
   }
 
   const names = [
     ...new Set((body.names ?? []).map((n) => n.trim()).filter(Boolean)),
   ];
   if (!names.length) {
-    return new Response(JSON.stringify({ error: "names is required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 400, { error: "names is required" });
+    return;
   }
 
   const organization_ids: string[] = [];
@@ -95,8 +93,5 @@ export default async function handler(request: Request): Promise<Response> {
     }
   }
 
-  return new Response(JSON.stringify({ organization_ids, unresolved_names }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  sendJson(res, 200, { organization_ids, unresolved_names });
 }

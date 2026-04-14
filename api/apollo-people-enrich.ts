@@ -1,45 +1,43 @@
 export const config = { runtime: "nodejs" };
 
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { readJsonBody, sendJson } from "./_nodeHttp";
+
 const UPSTREAM = "https://api.apollo.io/api/v1/people/bulk_match";
 
 const CHUNK = 10;
 
 type Body = { ids: string[] };
 
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
-    });
+export default async function handler(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
   }
 
   const key = process.env.APOLLO_API_KEY;
   if (!key) {
-    return new Response(
-      JSON.stringify({ error: "Missing APOLLO_API_KEY on server" }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    );
+    sendJson(res, 500, { error: "Missing APOLLO_API_KEY on server" });
+    return;
   }
 
   let body: Body;
   try {
-    body = (await request.json()) as Body;
+    body = await readJsonBody<Body>(req);
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
   }
 
   const ids = [
     ...new Set((body.ids ?? []).map((id) => id.trim()).filter(Boolean)),
   ];
   if (!ids.length) {
-    return new Response(JSON.stringify({ matches: [] }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    sendJson(res, 200, { matches: [] });
+    return;
   }
 
   const matches: unknown[] = [];
@@ -76,8 +74,5 @@ export default async function handler(request: Request): Promise<Response> {
     }
   }
 
-  return new Response(JSON.stringify({ matches }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  sendJson(res, 200, { matches });
 }
