@@ -378,6 +378,10 @@ export default function App() {
               <tbody>
                 {result.data.map((c) => {
                   const rev = revealById[c.id];
+                  const linkedInUrl = rev?.matchedUrl?.trim() || c.linkedinSearchUrl;
+                  const linkedInLabel = rev?.matchedUrl?.trim()
+                    ? "LinkedIn matched"
+                    : "Tìm công ty";
                   return (
                     <tr key={c.id}>
                       <td className="td-check">
@@ -424,11 +428,11 @@ export default function App() {
                       <td>
                         <a
                           className="linkedin-search-link"
-                          href={c.linkedinSearchUrl}
+                          href={linkedInUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          Tìm công ty
+                          {linkedInLabel}
                         </a>
                       </td>
                       <td className="td-job-sources">
