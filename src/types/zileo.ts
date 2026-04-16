@@ -49,11 +49,22 @@ export interface CompanyRevealResult {
   isOutsource: boolean;
 }
 
+/** Kết quả reveal từ Tavily — đồng bộ với JSON API `/api/reveal-company-v2`. */
+export interface CompanyRevealV2Result {
+  companyName: string;
+  matchedUrl: string | null;
+  industry: string;
+  companySize: string;
+  source: "tavily";
+  confidence: "high" | "medium" | "low";
+}
+
 /** State UI cho một dòng reveal (có thể đang tải hoặc lỗi). */
 export interface CompanyRevealRowState {
   loading: boolean;
   companySize?: string;
-  isHeadhunt?: boolean;
-  isOutsource?: boolean;
+  industry?: string;
+  confidence?: "high" | "medium" | "low";
+  matchedUrl?: string | null;
   error?: string;
 }

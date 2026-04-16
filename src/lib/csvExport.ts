@@ -3,8 +3,8 @@ import type { Company } from "../types/zileo";
 
 type CompanyRevealForExport = {
   companySize?: string;
-  isHeadhunt?: boolean;
-  isOutsource?: boolean;
+  industry?: string;
+  confidence?: "high" | "medium" | "low";
 };
 
 /** Ngày giờ theo UTC+7 (Asia/Ho_Chi_Minh), dùng cho tên file: `yyyy-mm-dd_HH-mm-ss`. */
@@ -75,7 +75,7 @@ export function buildDecisionMakersCsv(
 }
 
 const COMPANY_HEADER =
-  "Company Name,Company ID,Country,Job Source URLs,Company Size,Is Headhunt,Is Outsourcing,Latest Job Posted At,LinkedIn Search URL";
+  "Company Name,Company ID,Country,Job Source URLs,Company Size,Industry,Reveal Confidence,Latest Job Posted At,LinkedIn Search URL";
 
 export function buildCompaniesCsv(
   companies: Company[],
@@ -92,8 +92,8 @@ export function buildCompaniesCsv(
         escapeCsvCell((c.country ?? "").trim()),
         escapeCsvCell(jobUrls),
         escapeCsvCell((reveal?.companySize ?? "").trim()),
-        escapeCsvCell(String(Boolean(reveal?.isHeadhunt))),
-        escapeCsvCell(String(Boolean(reveal?.isOutsource))),
+        escapeCsvCell((reveal?.industry ?? "").trim()),
+        escapeCsvCell((reveal?.confidence ?? "").trim()),
         escapeCsvCell((c.latestJobPostedAt ?? "").trim()),
         escapeCsvCell((c.linkedinSearchUrl ?? "").trim()),
       ].join(","),

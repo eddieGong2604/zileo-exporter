@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCompanies } from "./api/companies";
-import { fetchCompanyReveal } from "./api/revealCompany";
+import { fetchCompanyRevealV2 } from "./api/revealCompanyV2";
 import { DecisionMakersModal } from "./components/DecisionMakersModal";
 import { COUNTRY_OPTIONS } from "./data/countries";
 import {
@@ -183,7 +183,7 @@ export default function App() {
     if (!result?.data.length) return;
     const selectedRows = result.data.filter((c) => selectedIds.has(c.id));
     const rows = selectedRows.length ? selectedRows : result.data;
-    const countryHint = country.trim() || undefined;
+    const revealCountry = country.trim() || undefined;
 
     const initial: Record<string, CompanyRevealRowState> = {};
     for (const c of rows) {
@@ -194,17 +194,18 @@ export default function App() {
 
     for (const c of rows) {
       try {
-        const data = await fetchCompanyReveal({
+        const data = await fetchCompanyRevealV2({
           companyName: c.name,
-          countryHint,
+          country: revealCountry,
         });
         setRevealById((prev) => ({
           ...prev,
           [c.id]: {
             loading: false,
             companySize: data.companySize,
-            isHeadhunt: data.isHeadhunt,
-            isOutsource: data.isOutsource,
+            industry: data.industry,
+            confidence: data.confidence,
+            matchedUrl: data.matchedUrl,
           },
         }));
       } catch (e) {
@@ -311,18 +312,14 @@ export default function App() {
               >
                 Export Companies CSV
               </button>
-              {false && (
-                <button
-                  type="button"
-                  className="btn-reveal-company"
-                  disabled={
-                    result?.data.length === 0 || loading || revealRunning
-                  }
-                  onClick={() => void revealCompanies()}
-                >
-                  {revealRunning ? "Checking…" : "Reveal Company Information"}
-                </button>
-              )}
+              <button
+                type="button"
+                className="btn-reveal-company"
+                disabled={result?.data.length === 0 || loading || revealRunning}
+                onClick={() => void revealCompanies()}
+              >
+                {revealRunning ? "Checking…" : "Reveal Company Information"}
+              </button>
 
               <button
                 type="button"
@@ -411,20 +408,11 @@ export default function App() {
                                   Quy mô:{" "}
                                   <strong>{rev.companySize ?? "—"}</strong>
                                 </span>
-                                {(rev.isHeadhunt || rev.isOutsource) && (
-                                  <span className="reveal-badges">
-                                    {rev.isHeadhunt && (
-                                      <span className="badge badge-headhunt">
-                                        Headhunt
-                                      </span>
-                                    )}
-                                    {rev.isOutsource && (
-                                      <span className="badge badge-outsource">
-                                        Outsourcing
-                                      </span>
-                                    )}
-                                  </span>
-                                )}
+                                <span className="reveal-size">
+                                  {" "}
+                                  · Industry:{" "}
+                                  <strong>{rev.industry ?? "—"}</strong>
+                                </span>
                               </>
                             )}
                           </span>

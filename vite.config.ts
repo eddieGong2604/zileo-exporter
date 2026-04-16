@@ -3,6 +3,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
 import { revealCompanyWithOpenAI } from "./lib/revealCompanyOpenAI";
+import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
 
 function revealDevApiPlugin(env: Record<string, string>): Plugin {
   return {
@@ -11,7 +12,11 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
       server.middlewares.use(
         (req: IncomingMessage, res: ServerResponse, next: () => void) => {
           const pathname = req.url?.split("?")[0] ?? "";
-          if (req.method !== "POST" || pathname !== "/api/reveal-company") {
+          if (
+            req.method !== "POST" ||
+            (pathname !== "/api/reveal-company" &&
+              pathname !== "/api/reveal-company-v2")
+          ) {
             next();
             return;
           }
@@ -23,27 +28,21 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
             void (async () => {
               try {
                 const raw = Buffer.concat(chunks).toString("utf8");
-                let body: { companyName?: string; countryHint?: string };
+                let body: {
+                  companyName?: string;
+                  countryHint?: string;
+                  country?: string;
+                };
                 try {
                   body = JSON.parse(raw) as {
                     companyName?: string;
                     countryHint?: string;
+                    country?: string;
                   };
                 } catch {
                   res.statusCode = 400;
                   res.setHeader("Content-Type", "application/json");
                   res.end(JSON.stringify({ error: "Invalid JSON body" }));
-                  return;
-                }
-                const apiKey = env.OPENAI_API_KEY;
-                if (!apiKey) {
-                  res.statusCode = 500;
-                  res.setHeader("Content-Type", "application/json");
-                  res.end(
-                    JSON.stringify({
-                      error: "Missing OPENAI_API_KEY on server",
-                    }),
-                  );
                   return;
                 }
                 const companyName = (body.companyName ?? "").trim();
@@ -55,12 +54,44 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                   );
                   return;
                 }
-                const countryHint = (body.countryHint ?? "").trim();
-                const result = await revealCompanyWithOpenAI({
-                  companyName,
-                  countryHint: countryHint || undefined,
-                  apiKey,
-                });
+                let result: unknown;
+                if (pathname === "/api/reveal-company-v2") {
+                  const apiKey = env.TAVILY_API_KEY;
+                  if (!apiKey) {
+                    res.statusCode = 500;
+                    res.setHeader("Content-Type", "application/json");
+                    res.end(
+                      JSON.stringify({
+                        error: "Missing TAVILY_API_KEY on server",
+                      }),
+                    );
+                    return;
+                  }
+                  const country = (body.country ?? "").trim();
+                  result = await revealCompanyWithTavily({
+                    companyName,
+                    country: country || undefined,
+                    apiKey,
+                  });
+                } else {
+                  const apiKey = env.OPENAI_API_KEY;
+                  if (!apiKey) {
+                    res.statusCode = 500;
+                    res.setHeader("Content-Type", "application/json");
+                    res.end(
+                      JSON.stringify({
+                        error: "Missing OPENAI_API_KEY on server",
+                      }),
+                    );
+                    return;
+                  }
+                  const countryHint = (body.countryHint ?? "").trim();
+                  result = await revealCompanyWithOpenAI({
+                    companyName,
+                    countryHint: countryHint || undefined,
+                    apiKey,
+                  });
+                }
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
                 res.end(JSON.stringify(result));
