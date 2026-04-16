@@ -70,7 +70,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CompaniesResponse | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [selectedCompanies, setSelectedCompanies] = useState<
+    Record<string, { name: string }>
+  >({});
   const [decisionModalOpen, setDecisionModalOpen] = useState(false);
   const [revealById, setRevealById] = useState<
     Record<string, CompanyRevealRowState>
@@ -78,42 +80,52 @@ export default function App() {
   const [revealRunning, setRevealRunning] = useState(false);
 
   useEffect(() => {
-    setSelectedIds(new Set());
-  }, [result]);
-
-  useEffect(() => {
     setRevealById({});
   }, [result]);
 
   const rowIds = useMemo(() => result?.data.map((c) => c.id) ?? [], [result]);
 
-  const allSelected =
-    rowIds.length > 0 && rowIds.every((id) => selectedIds.has(id));
+  const selectedCount = useMemo(
+    () => Object.keys(selectedCompanies).length,
+    [selectedCompanies],
+  );
 
-  const toggleRow = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  const allSelected =
+    rowIds.length > 0 && rowIds.every((id) => Boolean(selectedCompanies[id]));
+
+  const toggleRow = useCallback((id: string, name: string) => {
+    setSelectedCompanies((prev) => {
+      if (prev[id]) {
+        const { [id]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [id]: { name } };
     });
   }, []);
 
   const toggleSelectAll = useCallback(() => {
-    if (!rowIds.length) return;
-    setSelectedIds((prev) => {
-      if (rowIds.every((id) => prev.has(id))) return new Set();
-      return new Set(rowIds);
+    if (!rowIds.length || !result?.data.length) return;
+    setSelectedCompanies((prev) => {
+      const pageAllSelected = rowIds.every((id) => Boolean(prev[id]));
+      if (pageAllSelected) {
+        const next = { ...prev };
+        for (const id of rowIds) delete next[id];
+        return next;
+      }
+      const next = { ...prev };
+      for (const c of result.data) {
+        next[c.id] = { name: c.name.trim() };
+      }
+      return next;
     });
-  }, [rowIds]);
+  }, [result, rowIds]);
 
   const selectedOrgNames = useMemo(() => {
-    if (!result) return [];
-    return result.data
-      .filter((c) => selectedIds.has(c.id))
+    const names = Object.values(selectedCompanies)
       .map((c) => c.name.trim())
       .filter(Boolean);
-  }, [result, selectedIds]);
+    return [...new Set(names)];
+  }, [selectedCompanies]);
 
   const runSearch = useCallback(async () => {
     setLoading(true);
@@ -170,18 +182,20 @@ export default function App() {
 
   const exportCompanies = useCallback(() => {
     const selectedRows =
-      result?.data.filter((c) => selectedIds.has(c.id)) ?? [];
+      result?.data.filter((c) => Boolean(selectedCompanies[c.id])) ?? [];
     const rows = selectedRows.length ? selectedRows : (result?.data ?? []);
     if (!rows.length) return;
     const csv = buildCompaniesCsv(rows, revealById);
     const scope = selectedRows.length ? "selected" : "page";
     const stamp = formatFilenameTimestampUtcPlus7();
     downloadTextFile(`companies_${scope}_${stamp}.csv`, csv);
-  }, [result, selectedIds, revealById]);
+  }, [result, selectedCompanies, revealById]);
 
   const revealCompanies = useCallback(async () => {
     if (!result?.data.length) return;
-    const selectedRows = result.data.filter((c) => selectedIds.has(c.id));
+    const selectedRows = result.data.filter((c) =>
+      Boolean(selectedCompanies[c.id]),
+    );
     const rows = selectedRows.length ? selectedRows : result.data;
     const revealCountry = country.trim() || undefined;
 
@@ -217,7 +231,7 @@ export default function App() {
       }
     }
     setRevealRunning(false);
-  }, [country, result, selectedIds]);
+  }, [country, result, selectedCompanies]);
 
   return (
     <div className="app">
@@ -304,6 +318,9 @@ export default function App() {
               {result.data.length} / {result.meta.total} công ty
             </span>
             <div className="meta-actions">
+              <span className="selection-cart">
+                Giỏ Hàng: <strong>{selectedCount}</strong> cong ty
+              </span>
               <button
                 type="button"
                 className="btn-export-company"
@@ -324,10 +341,18 @@ export default function App() {
               <button
                 type="button"
                 className="btn-export"
-                disabled={selectedIds.size === 0}
+                disabled={selectedCount === 0}
                 onClick={() => setDecisionModalOpen(true)}
               >
                 Export Decision Makers
+              </button>
+              <button
+                type="button"
+                className="btn-export"
+                disabled={selectedCount === 0}
+                onClick={() => setSelectedCompanies({})}
+              >
+                Xoa Giỏ Hàng
               </button>
             </div>
           </div>
@@ -378,7 +403,8 @@ export default function App() {
               <tbody>
                 {result.data.map((c) => {
                   const rev = revealById[c.id];
-                  const linkedInUrl = rev?.matchedUrl?.trim() || c.linkedinSearchUrl;
+                  const linkedInUrl =
+                    rev?.matchedUrl?.trim() || c.linkedinSearchUrl;
                   const linkedInLabel = rev?.matchedUrl?.trim()
                     ? "LinkedIn matched"
                     : "Tìm công ty";
@@ -388,8 +414,8 @@ export default function App() {
                         <span className="check-cell">
                           <input
                             type="checkbox"
-                            checked={selectedIds.has(c.id)}
-                            onChange={() => toggleRow(c.id)}
+                            checked={Boolean(selectedCompanies[c.id])}
+                            onChange={() => toggleRow(c.id, c.name)}
                             aria-label={`Chọn ${c.name}`}
                           />
                         </span>
@@ -398,10 +424,6 @@ export default function App() {
                         <span className="name-text">{c.name}</span>
                         {rev ? (
                           <span className="reveal-inline">
-                            {" "}
-                            <span className="reveal-sep" aria-hidden="true">
-                              ·
-                            </span>{" "}
                             {rev.loading ? (
                               <span className="reveal-muted">Checking…</span>
                             ) : rev.error ? (
@@ -413,8 +435,7 @@ export default function App() {
                                   <strong>{rev.companySize ?? "—"}</strong>
                                 </span>
                                 <span className="reveal-size">
-                                  {" "}
-                                  · Industry:{" "}
+                                  Industry:{" "}
                                   <strong>{rev.industry ?? "—"}</strong>
                                 </span>
                               </>
