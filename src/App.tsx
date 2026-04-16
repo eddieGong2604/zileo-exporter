@@ -352,7 +352,7 @@ export default function App() {
                 disabled={selectedCount === 0}
                 onClick={() => setSelectedCompanies({})}
               >
-                Xoa Giỏ Hàng
+                Xoá Giỏ Hàng
               </button>
             </div>
           </div>
