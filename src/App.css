@@ -182,6 +182,10 @@ tr:last-child td {
   color: #0f172a;
 }
 
+.target-star {
+  color: #f59e0b;
+}
+
 .reveal-inline {
   display: flex;
   flex-direction: column;

@@ -20,7 +20,7 @@ Du lieu duoc lay tu Tavily API, uu tien ket qua LinkedIn company page.
 }
 ```
 
-`countryHint` la optional, dung de giam nhieu cong ty trung ten.
+`countryHint` la optional, dung de giam nhieu Công ty trung ten.
 
 ### Response body (server -> client)
 
@@ -63,7 +63,7 @@ Tavily tra ve list `results[]` (nhu `tavily-response.sample.json`).
 Can filter theo dung thu tu:
 
 1. `url` chua `linkedin.com/company/`
-2. `content` hoac `title` chua ten cong ty (`companyName`) sau khi normalize:
+2. `content` hoac `title` chua ten Công ty (`companyName`) sau khi normalize:
    - lowercase
    - bo khoang trang thua
    - bo ky tu dac biet nhe (neu can)
@@ -108,7 +108,7 @@ Flow:
 1. Validate method POST
 2. Validate `companyName`
 3. Goi Tavily API
-4. Filter ket qua LinkedIn company page dung ten cong ty
+4. Filter ket qua LinkedIn company page dung ten Công ty
 5. Parse `industry` + `companySize`
 6. Return JSON
 

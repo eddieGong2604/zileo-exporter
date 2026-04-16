@@ -61,6 +61,41 @@ function clampLimit(raw: string): number {
   return Math.min(100, n);
 }
 
+function parseCompanySizeUpperBound(companySize?: string): number | null {
+  const raw = (companySize ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/,/g, "");
+  const rangeMatch = normalized.match(/(\d+)\s*-\s*(\d+)/);
+  if (rangeMatch?.[2]) return Number(rangeMatch[2]);
+  const plusMatch = normalized.match(/(\d+)\s*\+/);
+  if (plusMatch?.[1]) return Number(plusMatch[1]);
+  const singleMatch = normalized.match(/\b(\d+)\b/);
+  if (singleMatch?.[1]) return Number(singleMatch[1]);
+  return null;
+}
+
+function isTargetCompany(input: {
+  companySize?: string;
+  industry?: string;
+}): boolean {
+  const rawSize = (input.companySize ?? "").trim().replace(/,/g, "");
+  const rangeMatch = rawSize.match(/(\d+)\s*-\s*(\d+)/);
+  let hasUnder1000Headcount = false;
+  if (rangeMatch?.[1]) {
+    hasUnder1000Headcount = Number(rangeMatch[1]) < 1000;
+  } else {
+    const upperBound = parseCompanySizeUpperBound(input.companySize);
+    hasUnder1000Headcount = upperBound !== null && upperBound < 1000;
+  }
+  if (!hasUnder1000Headcount) return false;
+  const industry = (input.industry ?? "").toLowerCase();
+  if (!industry) return false;
+  return (
+    !industry.includes("software development") &&
+    !industry.includes("it services")
+  );
+}
+
 export default function App() {
   const [datePosted, setDatePosted] = useState<DatePostedFilter>("ONE_DAY_AGO");
   const [pageInput, setPageInput] = useState("1");
@@ -319,7 +354,7 @@ export default function App() {
             </span>
             <div className="meta-actions">
               <span className="selection-cart">
-                Giỏ Hàng: <strong>{selectedCount}</strong> cong ty
+                Cart: <strong>{selectedCount}</strong> Công ty
               </span>
               <button
                 type="button"
@@ -352,7 +387,7 @@ export default function App() {
                 disabled={selectedCount === 0}
                 onClick={() => setSelectedCompanies({})}
               >
-                Xoá Giỏ Hàng
+                Xoá Cart
               </button>
             </div>
           </div>
@@ -408,6 +443,10 @@ export default function App() {
                   const linkedInLabel = rev?.matchedUrl?.trim()
                     ? "LinkedIn matched"
                     : "Tìm công ty";
+                  const targetStar = isTargetCompany({
+                    companySize: rev?.companySize,
+                    industry: rev?.industry,
+                  });
                   return (
                     <tr key={c.id}>
                       <td className="td-check">
@@ -421,7 +460,19 @@ export default function App() {
                         </span>
                       </td>
                       <td className="name name-with-reveal">
-                        <span className="name-text">{c.name}</span>
+                        <span className="name-text">
+                          {c.name}
+                          {targetStar && (
+                            <span
+                              className="target-star"
+                              title="Target fit: quy mo < 500 va industry khong chua Software Development/IT Services"
+                              aria-label="Target company"
+                            >
+                              {" "}
+                              ⭐
+                            </span>
+                          )}
+                        </span>
                         {rev ? (
                           <span className="reveal-inline">
                             {rev.loading ? (
