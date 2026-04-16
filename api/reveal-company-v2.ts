@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { revealCompanyWithTavily } from "../lib/revealCompanyTavily";
+import { revealCompanyWithTavily } from "../lib/revealCompanyTavily.js";
 
 export const config = { runtime: "nodejs" };
 
