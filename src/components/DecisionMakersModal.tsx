@@ -12,18 +12,13 @@ export const DEFAULT_APOLLO_PERSON_TITLES = [
   "CEO",
   "CTO",
   "CPO",
-  "VP of Engineering",
-  "VP of Technology",
-  "VP of Product",
   "Director of Engineering",
   "Technical Director",
-  "IT Director",
   "Engineering Director",
   "Product Director",
   "Head of Engineering",
   "Head of Technology",
   "Head of Product",
-  "Head of IT",
   "Engineering Manager",
 ] as const;
 
