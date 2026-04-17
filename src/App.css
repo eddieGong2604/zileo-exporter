@@ -651,6 +651,31 @@ tr:last-child td {
   min-width: 200px;
 }
 
+.dm-results-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn-enrich {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #7c3aed;
+  background: #fff;
+  color: #6d28d9;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-enrich:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .btn-export-csv {
   font: inherit;
   font-weight: 600;

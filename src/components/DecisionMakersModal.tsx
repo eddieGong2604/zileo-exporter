@@ -1,5 +1,8 @@
 import { useCallback, useId, useState, type KeyboardEvent } from "react";
-import { fetchApolloDecisionMakers } from "../api/apolloDecisionMakers";
+import {
+  enrichApolloDecisionMakersPeople,
+  fetchApolloDecisionMakers,
+} from "../api/apolloDecisionMakers";
 import {
   buildDecisionMakersCsv,
   downloadTextFile,
@@ -43,6 +46,8 @@ export function DecisionMakersModal({
   const [draft, setDraft] = useState("");
   const [includeSimilar, setIncludeSimilar] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [enrichLoading, setEnrichLoading] = useState(false);
+  const [enriched, setEnriched] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [data, setData] = useState<ApolloDecisionMakersResult | null>(null);
   const [unresolvedNames, setUnresolvedNames] = useState<string[]>([]);
@@ -78,6 +83,7 @@ export function DecisionMakersModal({
     setErr(null);
     setData(null);
     setUnresolvedNames([]);
+    setEnriched(false);
     try {
       const { result, unresolved_names } = await fetchApolloDecisionMakers({
         organizationNames,
@@ -94,6 +100,21 @@ export function DecisionMakersModal({
       setLoading(false);
     }
   }, [includeSimilar, organizationNames, tags]);
+
+  const runEnrich = useCallback(async () => {
+    if (!data?.people.length || enriched) return;
+    setEnrichLoading(true);
+    setErr(null);
+    try {
+      const people = await enrichApolloDecisionMakersPeople(data.people);
+      setData((prev) => (prev ? { ...prev, people } : null));
+      setEnriched(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Apollo enrich failed");
+    } finally {
+      setEnrichLoading(false);
+    }
+  }, [data, enriched]);
 
   const exportCsv = useCallback(() => {
     if (!data?.people.length) return;
@@ -176,9 +197,10 @@ export function DecisionMakersModal({
             </div>
           </div>
           <p className="dm-hint">
-            Organization Search → People Search → <code>people/bulk_match</code>{" "}
-            với <code>reveal_personal_emails=true</code> (email + LinkedIn trong
-            response; tốn credits theo plan Apollo).
+            Bước 1: People Search (không tốn bulk_match). Bước 2: khi list ổn,
+            bấm <strong>Enrich information</strong> để gọi{" "}
+            <code>people/bulk_match</code> / enrich — email &amp; LinkedIn, tốn
+            credits Apollo.
           </p>
           <label className="dm-check">
             <input
@@ -205,17 +227,35 @@ export function DecisionMakersModal({
             <div className="dm-results-toolbar">
               <p className="dm-results-meta">
                 Tổng khớp (Apollo): {data.total_entries ?? "—"} · Trả về{" "}
-                {people.length} người (trang 1) — đã gọi enrich để lấy email /
-                LinkedIn khi có
+                {people.length} người (trang 1).
+                {enriched
+                  ? " Đã enrich — email / LinkedIn theo phản hồi Apollo."
+                  : " Chưa enrich — bấm Enrich information nếu muốn lấy email / LinkedIn (tốn credits)."}
               </p>
-              <button
-                type="button"
-                className="btn-export-csv"
-                onClick={exportCsv}
-                disabled={!people.length}
-              >
-                Export CSV
-              </button>
+              <div className="dm-results-actions">
+                <button
+                  type="button"
+                  className="btn-enrich"
+                  onClick={() => void runEnrich()}
+                  disabled={
+                    !people.length || enrichLoading || enriched || loading
+                  }
+                >
+                  {enrichLoading
+                    ? "Đang enrich…"
+                    : enriched
+                      ? "Đã enrich"
+                      : "Enrich information"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-export-csv"
+                  onClick={exportCsv}
+                  disabled={!people.length}
+                >
+                  Export CSV
+                </button>
+              </div>
             </div>
             <div className="dm-table-wrap dm-table-wide">
               <table className="dm-table">
@@ -273,12 +313,10 @@ export function DecisionMakersModal({
           <button
             type="button"
             className="btn-primary"
-            disabled={loading || !tags.length}
+            disabled={loading || enrichLoading || !tags.length}
             onClick={run}
           >
-            {loading
-              ? "Đang gọi Apollo (search + enrich)…"
-              : "Chạy Apollo search"}
+            {loading ? "Đang gọi Apollo search…" : "Chạy Apollo search"}
           </button>
         </div>
       </div>

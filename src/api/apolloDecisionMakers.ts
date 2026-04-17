@@ -7,6 +7,8 @@ import {
 } from "../lib/mergeApolloEnrichment";
 import type {
   ApolloDecisionMakersResult,
+  ApolloPerson,
+  ApolloPersonEnriched,
   ApolloPeopleSearchResponse,
 } from "../types/apollo";
 
@@ -153,6 +155,7 @@ export type FetchDecisionMakersInput = {
   includeSimilarTitles?: boolean;
 };
 
+/** People search + resolve orgs — không gọi bulk_match (tiết kiệm credits). */
 export async function fetchApolloDecisionMakers(
   input: FetchDecisionMakersInput,
 ): Promise<{
@@ -180,14 +183,7 @@ export async function fetchApolloDecisionMakers(
   });
 
   const rawPeople = peopleResponse.people ?? [];
-  const ids = rawPeople.map((p) => p.id).filter(Boolean);
-
-  const matches = import.meta.env.DEV
-    ? await bulkEnrichMatchesDev(ids)
-    : await bulkEnrichMatchesProd(ids);
-
-  const enrichMap = enrichmentMapFromMatches(matches);
-  const people = mergePeopleWithEnrichment(rawPeople, enrichMap);
+  const people = mergePeopleWithEnrichment(rawPeople, new Map());
 
   return {
     result: {
@@ -196,4 +192,22 @@ export async function fetchApolloDecisionMakers(
     },
     unresolved_names,
   };
+}
+
+/**
+ * Gọi sau khi user xem list search OK — bulk_match tốn credits Apollo (email / LinkedIn).
+ * Dev: `/apollo-api/people/bulk_match` · Prod: `/api/apollo-people-enrich`
+ */
+export async function enrichApolloDecisionMakersPeople(
+  people: ApolloPerson[],
+): Promise<ApolloPersonEnriched[]> {
+  const ids = people.map((p) => p.id).filter(Boolean);
+  if (!ids.length) return [];
+
+  const matches = import.meta.env.DEV
+    ? await bulkEnrichMatchesDev(ids)
+    : await bulkEnrichMatchesProd(ids);
+
+  const enrichMap = enrichmentMapFromMatches(matches);
+  return mergePeopleWithEnrichment(people, enrichMap);
 }
