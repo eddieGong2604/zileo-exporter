@@ -5,9 +5,8 @@ export function firstOrganizationId(data: unknown): string | null {
   const list = d.organizations as unknown[];
   const listAccounts = d.accounts as unknown[];
   if (
-    ((!Array.isArray(list) || list.length === 0) &&
-      !Array.isArray(listAccounts)) ||
-    listAccounts.length === 0
+    (!Array.isArray(list) || list.length === 0) &&
+    (!Array.isArray(listAccounts) || listAccounts.length === 0)
   )
     return null;
   const first = list[0] as Record<string, unknown>;
