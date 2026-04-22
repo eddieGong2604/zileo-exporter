@@ -33,7 +33,7 @@ export function formatFilenameTimestampUtcPlus7(date = new Date()): string {
 }
 
 /** Theo temp_import.csv, không có Employees Count. */
-const HEADER = "First Name,Company Name,Email,LinkedIn,Country";
+const HEADER = "First Name,Title,Company Name,Email,LinkedIn,Country";
 
 function escapeCsvCell(value: string): string {
   if (/[",\r\n]/.test(value)) {
@@ -44,6 +44,7 @@ function escapeCsvCell(value: string): string {
 
 function row(
   firstName: string,
+  title: string,
   company: string,
   email: string,
   linkedIn: string,
@@ -51,6 +52,7 @@ function row(
 ): string {
   return [
     escapeCsvCell(firstName),
+    escapeCsvCell(title),
     escapeCsvCell(company),
     escapeCsvCell(email),
     escapeCsvCell(linkedIn),
@@ -66,10 +68,11 @@ export function buildDecisionMakersCsv(
   const country = countryLabel.trim();
   for (const p of people) {
     const first = (p.first_name ?? "").trim();
+    const title = (p.title ?? "").trim();
     const company = (p.organization?.name ?? "").trim();
     const email = (p.email ?? "").trim();
     const linkedin = (p.linkedin_url ?? "").trim();
-    lines.push(row(first, company, email, linkedin, country));
+    lines.push(row(first, title, company, email, linkedin, country));
   }
   return lines.join("\r\n");
 }
