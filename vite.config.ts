@@ -2,8 +2,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
+import { createLogger } from "./lib/logger.js";
 import { revealCompanyWithOpenAI } from "./lib/revealCompanyOpenAI";
 import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
+
+const devRevealLog = createLogger("vite/reveal-dev-api");
 
 function revealDevApiPlugin(env: Record<string, string>): Plugin {
   return {
@@ -27,6 +30,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
           req.on("end", () => {
             void (async () => {
               try {
+                devRevealLog.info("request", { pathname });
                 const raw = Buffer.concat(chunks).toString("utf8");
                 let body: {
                   companyName?: string;
@@ -97,6 +101,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                 res.end(JSON.stringify(result));
               } catch (e) {
                 const msg = e instanceof Error ? e.message : "OpenAI error";
+                devRevealLog.error("handler error", { pathname, msg });
                 res.statusCode = 502;
                 res.setHeader("Content-Type", "application/json");
                 res.end(JSON.stringify({ error: msg }));

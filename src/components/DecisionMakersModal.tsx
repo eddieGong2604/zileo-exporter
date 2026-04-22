@@ -16,7 +16,10 @@ import {
   downloadTextFile,
   formatFilenameTimestampUtcPlus7,
 } from "../lib/csvExport";
+import { createLogger } from "../lib/logger";
 import type { ApolloDecisionMakersResult } from "../types/apollo";
+
+const log = createLogger("DecisionMakersModal");
 
 /** Mặc định theo `apollo-decision-makers.md` (personTitles trong URL). */
 export const DEFAULT_APOLLO_PERSON_TITLES = [
@@ -98,6 +101,10 @@ export function DecisionMakersModal({
     setSelectedIds(new Set());
     setCurrentPage(1);
     try {
+      log.info("Apollo search run", {
+        orgs: organizationNames.length,
+        titles: tags.length,
+      });
       const { result, unresolved_names } = await fetchApolloDecisionMakers({
         organizationNames,
         person_titles: tags,
@@ -108,7 +115,14 @@ export function DecisionMakersModal({
       setData(result);
       setUnresolvedNames(unresolved_names);
       setScreen("results");
+      log.info("Apollo search ok", {
+        people: result.people.length,
+        unresolved: unresolved_names.length,
+      });
     } catch (e) {
+      log.error("Apollo search failed", {
+        message: e instanceof Error ? e.message : String(e),
+      });
       setErr(e instanceof Error ? e.message : "Apollo request failed");
     } finally {
       setLoading(false);
@@ -123,6 +137,7 @@ export function DecisionMakersModal({
     setEnrichLoading(true);
     setErr(null);
     try {
+      log.info("Enrich run", { count: toEnrich.length });
       const enrichedSubset = await enrichApolloDecisionMakersPeople(toEnrich);
       const byId = new Map(enrichedSubset.map((p) => [p.id, p]));
       setData((prev) =>
@@ -133,7 +148,11 @@ export function DecisionMakersModal({
             }
           : null,
       );
+      log.info("Enrich ok", { merged: enrichedSubset.length });
     } catch (e) {
+      log.error("Enrich failed", {
+        message: e instanceof Error ? e.message : String(e),
+      });
       setErr(e instanceof Error ? e.message : "Apollo enrich failed");
     } finally {
       setEnrichLoading(false);
@@ -144,6 +163,7 @@ export function DecisionMakersModal({
     if (!data?.people.length) return;
     const rows = data.people.filter((p) => selectedIds.has(p.id));
     if (!rows.length) return;
+    log.info("Export CSV (selection)", { rows: rows.length });
     const csv = buildDecisionMakersCsv(rows, countryLabel);
     const safeOrg = organizationNames[0]
       ? organizationNames[0].replace(/[^\w\-]+/g, "_").slice(0, 40)
@@ -154,6 +174,7 @@ export function DecisionMakersModal({
 
   const exportAllCsv = useCallback(() => {
     if (!data?.people.length) return;
+    log.info("Export CSV (all pages)", { rows: data.people.length });
     const csv = buildDecisionMakersCsv(data.people, countryLabel);
     const safeOrg = organizationNames[0]
       ? organizationNames[0].replace(/[^\w\-]+/g, "_").slice(0, 40)

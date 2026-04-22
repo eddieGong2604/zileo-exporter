@@ -1,5 +1,6 @@
 import { buildApolloPeopleSearchQuery } from "../lib/apolloQuery";
 import type { ApolloPeopleSearchInput } from "../lib/apolloQuery";
+import { createLogger } from "../lib/logger";
 import { firstOrganizationId } from "../lib/apolloOrgSearch";
 import {
   enrichmentMapFromMatches,
@@ -11,6 +12,8 @@ import type {
   ApolloPersonEnriched,
   ApolloPeopleSearchResponse,
 } from "../types/apollo";
+
+const log = createLogger("src/api/apolloDecisionMakers");
 
 async function resolveOrgIdsDev(names: string[]): Promise<{
   organization_ids: string[];
@@ -39,7 +42,10 @@ async function resolveOrgIdsDev(names: string[]): Promise<{
       },
     );
 
-    console.log("TO DEBUG: ", res);
+    log.info(`mixed_companies dev "${name}"`, {
+      status: res.status,
+      ok: res.ok,
+    });
 
     if (!res.ok) {
       unresolved_names.push(name);
@@ -63,12 +69,14 @@ async function resolveOrgIdsProd(names: string[]): Promise<{
   organization_ids: string[];
   unresolved_names: string[];
 }> {
+  log.info("resolve organizations (prod)", { nameCount: names.length });
   const res = await fetch("/api/apollo-resolve-organizations", {
     method: "POST",
     headers: { "Content-Type": "application/json", accept: "application/json" },
     body: JSON.stringify({ names }),
   });
   const text = await res.text();
+  log.fetchMeta("apollo-resolve-organizations", res, text.length);
   if (!res.ok) {
     throw new Error(text || `Resolve orgs HTTP ${res.status}`);
   }
@@ -86,6 +94,7 @@ async function fetchPeople(
     ? `/apollo-api/mixed_people/api_search?${qs}`
     : `/api/apollo-people-search`;
 
+  log.debug("fetchPeople", { url: url.split("?")[0], page: input.page });
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -97,9 +106,16 @@ async function fetchPeople(
 
   if (!res.ok) {
     const text = await res.text();
+    log.error("people search HTTP error", { status: res.status, bodyBytes: text.length });
     throw new Error(text || `People search HTTP ${res.status}`);
   }
-  return res.json() as Promise<ApolloPeopleSearchResponse>;
+  const json = (await res.json()) as ApolloPeopleSearchResponse;
+  log.info("people search ok", {
+    page: input.page,
+    people: json.people?.length ?? 0,
+    total_entries: json.total_entries,
+  });
+  return json;
 }
 
 async function fetchAllPeoplePages(
@@ -113,6 +129,7 @@ async function fetchAllPeoplePages(
   });
   const totalEntries = first.total_entries ?? first.people?.length ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalEntries / perPage));
+  log.info("fetchAllPeoplePages", { totalPages, totalEntries, perPage });
 
   const allPeople: ApolloPerson[] = [...(first.people ?? [])];
   for (let page = 2; page <= totalPages; page += 1) {
@@ -122,6 +139,7 @@ async function fetchAllPeoplePages(
     allPeople.push(...chunk);
   }
 
+  log.info("fetchAllPeoplePages done", { merged: allPeople.length });
   return {
     total_entries: first.total_entries,
     people: allPeople,
@@ -166,7 +184,10 @@ async function bulkEnrichMatchesProd(ids: string[]): Promise<unknown[]> {
     headers: { "Content-Type": "application/json", accept: "application/json" },
     body: JSON.stringify({ ids }),
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    log.warn("apollo-people-enrich HTTP not ok", { status: res.status });
+    return [];
+  }
   try {
     const json = (await res.json()) as { matches?: unknown[] };
     return Array.isArray(json.matches) ? json.matches : [];
@@ -190,6 +211,10 @@ export async function fetchApolloDecisionMakers(
   result: ApolloDecisionMakersResult;
   unresolved_names: string[];
 }> {
+  log.info("fetchApolloDecisionMakers start", {
+    orgCount: input.organizationNames.length,
+    titleCount: input.person_titles.length,
+  });
   const { organization_ids, unresolved_names } = import.meta.env.DEV
     ? await resolveOrgIdsDev(input.organizationNames)
     : await resolveOrgIdsProd(input.organizationNames);
@@ -216,6 +241,10 @@ export async function fetchApolloDecisionMakers(
   );
   const people = mergePeopleWithEnrichment(uniquePeople, new Map());
 
+  log.info("fetchApolloDecisionMakers done", {
+    people: people.length,
+    unresolved: unresolved_names.length,
+  });
   return {
     result: {
       total_entries: peopleResponse.total_entries,
@@ -235,10 +264,12 @@ export async function enrichApolloDecisionMakersPeople(
   const ids = people.map((p) => p.id).filter(Boolean);
   if (!ids.length) return [];
 
+  log.info("enrichApolloDecisionMakersPeople", { count: ids.length });
   const matches = import.meta.env.DEV
     ? await bulkEnrichMatchesDev(ids)
     : await bulkEnrichMatchesProd(ids);
 
   const enrichMap = enrichmentMapFromMatches(matches);
+  log.info("enrich done", { matchRows: matches.length });
   return mergePeopleWithEnrichment(people, enrichMap);
 }

@@ -1,6 +1,9 @@
 export const config = { runtime: "nodejs" };
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("api/apollo-people-search");
 
 const UPSTREAM = "https://api.apollo.io/api/v1/mixed_people/api_search";
 
@@ -60,12 +63,14 @@ export default async function handler(
   res: ServerResponse,
 ): Promise<void> {
   if (req.method !== "POST") {
+    log.warn("reject", { reason: "method_not_allowed" });
     sendJson(res, 405, { error: "Method not allowed" });
     return;
   }
 
   const key = process.env.APOLLO_API_KEY;
   if (!key) {
+    log.error("missing APOLLO_API_KEY");
     sendJson(res, 500, { error: "Missing APOLLO_API_KEY on server" });
     return;
   }
@@ -74,11 +79,16 @@ export default async function handler(
   try {
     body = await readJsonBody<Body>(req);
   } catch {
+    log.warn("invalid JSON body");
     sendJson(res, 400, { error: "Invalid JSON body" });
     return;
   }
 
   if (!body.organization_ids?.length || !body.person_titles?.length) {
+    log.warn("validation", {
+      orgCount: body.organization_ids?.length ?? 0,
+      titleCount: body.person_titles?.length ?? 0,
+    });
     sendJson(res, 400, {
       error: "organization_ids and person_titles are required",
     });
@@ -87,6 +97,12 @@ export default async function handler(
 
   const qs = buildQuery(body);
   const url = `${UPSTREAM}?${qs}`;
+  log.info("Apollo people search", {
+    page: body.page ?? 1,
+    per_page: body.per_page ?? 100,
+    orgIds: body.organization_ids.length,
+    titles: body.person_titles.length,
+  });
 
   const upstream = await fetch(url, {
     method: "POST",
@@ -100,6 +116,7 @@ export default async function handler(
   });
 
   const text = await upstream.text();
+  log.fetchMeta("Apollo upstream", upstream, text.length);
   res.statusCode = upstream.status;
   res.setHeader(
     "Content-Type",

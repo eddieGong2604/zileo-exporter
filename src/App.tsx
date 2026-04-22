@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCompanies } from "./api/companies";
 import { fetchCompanyRevealV2 } from "./api/revealCompanyV2";
 import { DecisionMakersModal } from "./components/DecisionMakersModal";
+import { createLogger } from "./lib/logger";
 import { COUNTRY_OPTIONS } from "./data/countries";
 import {
   buildCompaniesCsv,
@@ -14,6 +15,8 @@ import type {
   DatePostedFilter,
 } from "./types/zileo";
 import "./App.css";
+
+const log = createLogger("App");
 
 const DEFAULT_KEYWORDS = [
   "javascript",
@@ -171,6 +174,7 @@ export default function App() {
     const page = clampPage(pageInput);
     const limit = clampLimit(limitInput);
     try {
+      log.info("runSearch", { page, limit });
       const data = await fetchCompanies({
         datePosted,
         page,
@@ -180,6 +184,9 @@ export default function App() {
       });
       setResult(data);
     } catch (e) {
+      log.error("runSearch failed", {
+        message: e instanceof Error ? e.message : String(e),
+      });
       setResult(null);
       setError(e instanceof Error ? e.message : "Request failed");
     } finally {
@@ -195,6 +202,7 @@ export default function App() {
       setError(null);
       const limit = clampLimit(limitInput);
       try {
+        log.info("runPageSearch", { page: safePage, limit });
         const data = await fetchCompanies({
           datePosted,
           page: safePage,
@@ -204,6 +212,9 @@ export default function App() {
         });
         setResult(data);
       } catch (e) {
+        log.error("runPageSearch failed", {
+          message: e instanceof Error ? e.message : String(e),
+        });
         setResult(null);
         setError(e instanceof Error ? e.message : "Request failed");
       } finally {
@@ -244,6 +255,7 @@ export default function App() {
     setRevealById((prev) => ({ ...prev, ...initial }));
     setRevealRunning(true);
 
+    log.info("revealCompanies start", { rowCount: rows.length });
     for (const c of rows) {
       try {
         const data = await fetchCompanyRevealV2({
@@ -262,12 +274,14 @@ export default function App() {
         }));
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Request failed";
+        log.warn("revealCompanies row failed", { id: c.id, name: c.name, msg });
         setRevealById((prev) => ({
           ...prev,
           [c.id]: { loading: false, error: msg },
         }));
       }
     }
+    log.info("revealCompanies done");
     setRevealRunning(false);
   }, [country, result, selectedCompanies]);
 

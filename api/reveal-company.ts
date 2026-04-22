@@ -1,6 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createLogger } from "../lib/logger.js";
 
 export const config = { runtime: "nodejs" };
+
+const log = createLogger("api/reveal-company");
 
 const OPENAI_RESPONSES = "https://api.openai.com/v1/responses";
 
@@ -174,12 +177,14 @@ export default async function handler(
   res: ServerResponse,
 ): Promise<void> {
   if (req.method !== "POST") {
+    log.warn("reject", { reason: "method_not_allowed" });
     sendJson(res, 405, { error: "Method not allowed" });
     return;
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
+    log.error("missing OPENAI_API_KEY");
     sendJson(res, 500, { error: "Missing OPENAI_API_KEY on server" });
     return;
   }
@@ -191,12 +196,14 @@ export default async function handler(
       countryHint?: string;
     }>(req);
   } catch {
+    log.warn("invalid JSON body");
     sendJson(res, 400, { error: "Invalid JSON body" });
     return;
   }
 
   const companyName = (body.companyName ?? "").trim();
   if (!companyName) {
+    log.warn("missing companyName");
     sendJson(res, 400, { error: "companyName is required" });
     return;
   }
@@ -204,14 +211,17 @@ export default async function handler(
   const countryHint = (body.countryHint ?? "").trim();
 
   try {
+    log.info("reveal start", { companyName, hasCountryHint: Boolean(countryHint) });
     const result = await revealCompanyWithOpenAI({
       companyName,
       countryHint: countryHint || undefined,
       apiKey,
     });
+    log.info("reveal ok", { companyName, companySize: result.companySize });
     sendJson(res, 200, result);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "OpenAI error";
+    log.error("reveal failed", { companyName, msg });
     sendJson(res, 502, { error: msg });
   }
 }

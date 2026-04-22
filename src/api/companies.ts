@@ -1,3 +1,4 @@
+import { createLogger } from "../lib/logger";
 import { linkedinCompanySearchUrl } from "../lib/linkedinCompanySearch";
 import type {
   CompaniesMeta,
@@ -5,6 +6,8 @@ import type {
   CompaniesSearchBody,
   CompanyFromApi,
 } from "../types/zileo";
+
+const log = createLogger("src/api/companies");
 
 function companiesEndpoint(): string {
   if (import.meta.env.DEV) {
@@ -23,6 +26,7 @@ function headers(): HeadersInit {
 export async function fetchCompanies(
   body: CompaniesSearchBody,
 ): Promise<CompaniesResponse> {
+  log.info("fetchCompanies", { endpoint: companiesEndpoint() });
   const res = await fetch(companiesEndpoint(), {
     method: "POST",
     headers: headers(),
@@ -30,6 +34,7 @@ export async function fetchCompanies(
   });
   if (!res.ok) {
     const text = await res.text();
+    log.error("fetchCompanies failed", { status: res.status, bodyBytes: text.length });
     throw new Error(text || `HTTP ${res.status}`);
   }
   const raw = (await res.json()) as {
@@ -44,5 +49,6 @@ export async function fetchCompanies(
       ...c,
       linkedinSearchUrl: linkedinCompanySearchUrl(c.name),
     }));
+  log.info("fetchCompanies ok", { count: data.length });
   return { ...raw, data };
 }

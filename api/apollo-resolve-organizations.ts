@@ -1,11 +1,14 @@
 export const config = { runtime: "nodejs" };
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("api/apollo-resolve-organizations");
 
 function firstOrganizationId(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
-  const list = (d.accounts as unknown[]) ?? (d.organizations as unknown[]);
+  const list = d.organizations as unknown[];
   if (!Array.isArray(list) || list.length === 0) return null;
   const first = list[0] as Record<string, unknown>;
   const oid = first.organization_id ?? first.id;
@@ -43,12 +46,14 @@ export default async function handler(
   res: ServerResponse,
 ): Promise<void> {
   if (req.method !== "POST") {
+    log.warn("reject", { reason: "method_not_allowed" });
     sendJson(res, 405, { error: "Method not allowed" });
     return;
   }
 
   const key = process.env.APOLLO_API_KEY;
   if (!key) {
+    log.error("missing APOLLO_API_KEY");
     sendJson(res, 500, { error: "Missing APOLLO_API_KEY on server" });
     return;
   }
@@ -57,6 +62,7 @@ export default async function handler(
   try {
     body = await readJsonBody<Body>(req);
   } catch {
+    log.warn("invalid JSON body");
     sendJson(res, 400, { error: "Invalid JSON body" });
     return;
   }
@@ -65,10 +71,12 @@ export default async function handler(
     ...new Set((body.names ?? []).map((n) => n.trim()).filter(Boolean)),
   ];
   if (!names.length) {
+    log.warn("empty names");
     sendJson(res, 400, { error: "names is required" });
     return;
   }
 
+  log.info("resolve org names", { count: names.length });
   const organization_ids: string[] = [];
   const unresolved_names: string[] = [];
   const seenIds = new Set<string>();
@@ -92,6 +100,7 @@ export default async function handler(
     });
 
     const text = await upstream.text();
+    log.fetchMeta(`mixed_companies/search name="${name}"`, upstream, text.length);
     if (!upstream.ok) {
       unresolved_names.push(name);
       continue;
@@ -114,5 +123,9 @@ export default async function handler(
     }
   }
 
+  log.info("done", {
+    resolved: organization_ids.length,
+    unresolved: unresolved_names.length,
+  });
   sendJson(res, 200, { organization_ids, unresolved_names });
 }

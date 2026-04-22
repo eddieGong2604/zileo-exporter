@@ -1,6 +1,9 @@
 export const config = { runtime: "nodejs" };
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("api/companies");
 
 const UPSTREAM = "https://api.zileo.io/opensearch/companies";
 
@@ -26,16 +29,19 @@ export default async function handler(
   res: ServerResponse,
 ): Promise<void> {
   if (req.method !== "POST") {
+    log.warn("reject", { reason: "method_not_allowed" });
     sendJson(res, 405, { error: "Method not allowed" });
     return;
   }
 
   const key = process.env.ZILEO_API_KEY;
   if (!key) {
+    log.error("missing ZILEO_API_KEY");
     sendJson(res, 500, { error: "Missing ZILEO_API_KEY on server" });
     return;
   }
 
+  log.info("POST upstream Zileo opensearch/companies");
   const body = await readRawBody(req);
 
   const upstream = await fetch(UPSTREAM, {
@@ -49,6 +55,7 @@ export default async function handler(
   });
 
   const text = await upstream.text();
+  log.fetchMeta("Zileo upstream", upstream, text.length);
   res.statusCode = upstream.status;
   res.setHeader(
     "Content-Type",

@@ -1,4 +1,8 @@
+import { createLogger } from "./logger.js";
+
 const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
+
+const log = createLogger("lib/revealCompanyTavily");
 
 type TavilyResult = {
   url?: unknown;
@@ -104,6 +108,7 @@ export async function revealCompanyWithTavily(opts: {
     ? `linkedIn of ${companyName} ${country}`
     : `linkedIn of ${companyName}`;
 
+  log.info("Tavily search", { companyName, hasCountry: Boolean(country) });
   const upstream = await fetch(TAVILY_SEARCH_URL, {
     method: "POST",
     headers: {
@@ -117,6 +122,7 @@ export async function revealCompanyWithTavily(opts: {
   });
 
   const raw = (await upstream.json()) as TavilyResponse | { detail?: unknown };
+  log.fetchMeta("Tavily upstream", upstream, JSON.stringify(raw).length);
   if (!upstream.ok) {
     const message =
       typeof raw === "object" &&
@@ -132,6 +138,7 @@ export async function revealCompanyWithTavily(opts: {
   const best = pickBestCandidate(candidates, companyName);
 
   if (!best) {
+    log.info("Tavily no strong candidate", { companyName });
     return {
       companyName,
       matchedUrl: null,
@@ -151,6 +158,7 @@ export async function revealCompanyWithTavily(opts: {
         ? "medium"
         : "low";
 
+  log.info("Tavily ok", { companyName, confidence });
   return {
     companyName,
     matchedUrl: best.url,

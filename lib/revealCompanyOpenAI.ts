@@ -1,6 +1,10 @@
 /** Logic dùng chung: Edge (`api/reveal-company`) và Vite dev middleware. */
 
+import { createLogger } from "./logger.js";
+
 const OPENAI_RESPONSES = "https://api.openai.com/v1/responses";
+
+const log = createLogger("lib/revealCompanyOpenAI");
 
 type OpenAIResponsesError = { error?: { message?: string } };
 
@@ -71,6 +75,10 @@ export async function revealCompanyWithOpenAI(opts: {
   apiKey: string;
 }): Promise<RevealCompanyPayload> {
   const { companyName, countryHint, apiKey } = opts;
+  log.info("OpenAI reveal start", {
+    companyName,
+    hasCountryHint: Boolean(countryHint?.trim()),
+  });
   const userPrompt = `Company: "${companyName}"${
     countryHint ? `\nGeographic context (hint): ${countryHint}` : ""
   }
@@ -115,6 +123,7 @@ Respond with JSON only (no markdown) matching the schema. Use "Unknown" for comp
   });
 
   let raw: unknown = await upstream.json();
+  log.fetchMeta("OpenAI responses (primary)", upstream, JSON.stringify(raw).length);
 
   if (!upstream.ok) {
     const fallbackPayload = {
@@ -132,6 +141,7 @@ Respond with JSON only (no markdown) matching the schema. Use "Unknown" for comp
       body: JSON.stringify(fallbackPayload),
     });
     raw = await upstream.json();
+    log.fetchMeta("OpenAI responses (fallback)", upstream, JSON.stringify(raw).length);
   }
 
   if (!upstream.ok) {
@@ -142,5 +152,7 @@ Respond with JSON only (no markdown) matching the schema. Use "Unknown" for comp
 
   const data = raw as Record<string, unknown>;
   const text = extractResponsesOutputText(data);
-  return parseRevealJson(text);
+  const out = parseRevealJson(text);
+  log.info("OpenAI reveal ok", { companyName, companySize: out.companySize });
+  return out;
 }
