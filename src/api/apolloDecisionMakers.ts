@@ -39,6 +39,8 @@ async function resolveOrgIdsDev(names: string[]): Promise<{
       },
     );
 
+    console.log("TO DEBUG: ", res);
+
     if (!res.ok) {
       unresolved_names.push(name);
       continue;
@@ -104,7 +106,11 @@ async function fetchAllPeoplePages(
   input: ApolloPeopleSearchInput,
 ): Promise<ApolloPeopleSearchResponse> {
   const perPage = input.per_page ?? 100;
-  const first = await fetchPeople({ ...input, page: input.page ?? 1, per_page: perPage });
+  const first = await fetchPeople({
+    ...input,
+    page: input.page ?? 1,
+    per_page: perPage,
+  });
   const totalEntries = first.total_entries ?? first.people?.length ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalEntries / perPage));
 
