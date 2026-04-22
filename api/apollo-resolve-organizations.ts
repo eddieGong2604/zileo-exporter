@@ -9,9 +9,19 @@ function firstOrganizationId(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
   const list = d.organizations as unknown[];
-  if (!Array.isArray(list) || list.length === 0) return null;
+  const listAccounts = d.accounts as unknown[];
+  if (
+    !Array.isArray(list) ||
+    list.length === 0 ||
+    !Array.isArray(listAccounts) ||
+    listAccounts.length === 0
+  )
+    return null;
   const first = list[0] as Record<string, unknown>;
-  const oid = first.organization_id ?? first.id;
+  const firstAccount = listAccounts[0] as Record<string, unknown>;
+
+  const oid = first.id ?? firstAccount.organization_id;
+
   return typeof oid === "string" ? oid : null;
 }
 
@@ -100,7 +110,11 @@ export default async function handler(
     });
 
     const text = await upstream.text();
-    log.fetchMeta(`mixed_companies/search name="${name}"`, upstream, text.length);
+    log.fetchMeta(
+      `mixed_companies/search name="${name}"`,
+      upstream,
+      text.length,
+    );
     if (!upstream.ok) {
       unresolved_names.push(name);
       continue;
