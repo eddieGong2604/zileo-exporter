@@ -32,6 +32,7 @@ export const DEFAULT_APOLLO_PERSON_TITLES = [
   "Head of Product",
   "Engineering Manager",
 ] as const;
+const PAGE_SIZE = 100;
 
 type Props = {
   open: boolean;
@@ -59,6 +60,8 @@ export function DecisionMakersModal({
   const [data, setData] = useState<ApolloDecisionMakersResult | null>(null);
   const [unresolvedNames, setUnresolvedNames] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [screen, setScreen] = useState<"setup" | "results">("setup");
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   const removeTag = useCallback((i: number) => {
@@ -93,6 +96,7 @@ export function DecisionMakersModal({
     setData(null);
     setUnresolvedNames([]);
     setSelectedIds(new Set());
+    setCurrentPage(1);
     try {
       const { result, unresolved_names } = await fetchApolloDecisionMakers({
         organizationNames,
@@ -103,6 +107,7 @@ export function DecisionMakersModal({
       });
       setData(result);
       setUnresolvedNames(unresolved_names);
+      setScreen("results");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Apollo request failed");
     } finally {
@@ -147,20 +152,42 @@ export function DecisionMakersModal({
     downloadTextFile(`decision-makers_${safeOrg}_${stamp}.csv`, csv);
   }, [countryLabel, data, organizationNames, selectedIds]);
 
+  const exportAllCsv = useCallback(() => {
+    if (!data?.people.length) return;
+    const csv = buildDecisionMakersCsv(data.people, countryLabel);
+    const safeOrg = organizationNames[0]
+      ? organizationNames[0].replace(/[^\w\-]+/g, "_").slice(0, 40)
+      : "export";
+    const stamp = formatFilenameTimestampUtcPlus7();
+    downloadTextFile(`decision-makers_all-pages_${safeOrg}_${stamp}.csv`, csv);
+  }, [countryLabel, data, organizationNames]);
+
   const people = data?.people ?? [];
+  const totalPages = Math.max(1, Math.ceil(people.length / PAGE_SIZE));
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const pagedPeople = people.slice(pageStart, pageStart + PAGE_SIZE);
 
   const selectedCount = useMemo(
     () => people.filter((p) => selectedIds.has(p.id)).length,
     [people, selectedIds],
   );
 
-  const allSelected = people.length > 0 && selectedCount === people.length;
-  const someSelected = selectedCount > 0 && !allSelected;
+  const pageSelectedCount = useMemo(
+    () => pagedPeople.filter((p) => selectedIds.has(p.id)).length,
+    [pagedPeople, selectedIds],
+  );
+  const allSelected =
+    pagedPeople.length > 0 && pageSelectedCount === pagedPeople.length;
+  const someSelected = pageSelectedCount > 0 && !allSelected;
 
   useEffect(() => {
     const el = selectAllRef.current;
     if (el) el.indeterminate = someSelected;
   }, [someSelected, allSelected]);
+
+  useEffect(() => {
+    setCurrentPage((prev) => Math.min(prev, totalPages));
+  }, [totalPages]);
 
   const selectedPeople = useMemo(
     () => people.filter((p) => selectedIds.has(p.id)),
@@ -170,8 +197,6 @@ export function DecisionMakersModal({
   const canEnrichSelection = selectedPeople.some(
     (p) => !p.email && !p.linkedin_url,
   );
-
-  const hasAnyContact = people.some((p) => p.email || p.linkedin_url);
 
   const toggleRow = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -184,12 +209,21 @@ export function DecisionMakersModal({
 
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => {
-      if (people.length === 0) return new Set();
-      const allOn = people.every((p) => prev.has(p.id));
-      if (allOn) return new Set();
-      return new Set(people.map((p) => p.id));
+      if (pagedPeople.length === 0) return new Set(prev);
+      const next = new Set(prev);
+      const allOnPage = pagedPeople.every((p) => next.has(p.id));
+      if (allOnPage) {
+        pagedPeople.forEach((p) => next.delete(p.id));
+      } else {
+        pagedPeople.forEach((p) => next.add(p.id));
+      }
+      return next;
     });
-  }, [people]);
+  }, [pagedPeople]);
+
+  const backToSetup = useCallback(() => {
+    setScreen("setup");
+  }, []);
 
   if (!open) return null;
 
@@ -204,80 +238,96 @@ export function DecisionMakersModal({
       >
         <div className="modal-head">
           <h2 id={titleId}>Export Decision Makers</h2>
-          <button
-            type="button"
-            className="modal-close"
-            aria-label="Đóng"
-            onClick={onClose}
-          >
-            ×
-          </button>
+          <div className="modal-head-actions">
+            {screen === "results" && people.length > 0 && (
+              <button
+                type="button"
+                className="btn-export-csv"
+                onClick={exportAllCsv}
+                disabled={loading || enrichLoading}
+              >
+                Export all pages CSV
+              </button>
+            )}
+            <button
+              type="button"
+              className="modal-close"
+              aria-label="Đóng"
+              onClick={onClose}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
-        <p className="modal-sub">
-          {organizationNames.length} công ty —{" "}
-          <span className="mono">{organizationNames.join(", ")}</span>
-        </p>
+        {screen === "setup" && (
+          <>
+            <p className="modal-sub">
+              {organizationNames.length} công ty —{" "}
+              <span className="mono">{organizationNames.join(", ")}</span>
+            </p>
 
-        <div className="dm-section">
-          <div className="dm-section-head">
-            <span className="dm-section-title">Job titles</span>
-            <span className="dm-count">× {tags.length}</span>
-          </div>
-          <label className="dm-label">Include</label>
-          <div className="tag-box">
-            <div className="tag-chips">
-              {tags.map((tag, i) => (
-                <span key={`${tag}-${i}`} className="tag-pill">
-                  {tag}
+            <div className="dm-section">
+              <div className="dm-section-head">
+                <span className="dm-section-title">Job titles</span>
+                <span className="dm-count">× {tags.length}</span>
+              </div>
+              <label className="dm-label">Include</label>
+              <div className="tag-box">
+                <div className="tag-chips">
+                  {tags.map((tag, i) => (
+                    <span key={`${tag}-${i}`} className="tag-pill">
+                      {tag}
+                      <button
+                        type="button"
+                        className="tag-remove"
+                        aria-label={`Xóa ${tag}`}
+                        onClick={() => removeTag(i)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    className="tag-input"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={onKeyDown}
+                    placeholder="Gõ title, Enter để thêm…"
+                  />
+                </div>
+                <div className="tag-actions">
                   <button
                     type="button"
-                    className="tag-remove"
-                    aria-label={`Xóa ${tag}`}
-                    onClick={() => removeTag(i)}
+                    className="tag-icon-btn"
+                    aria-label="Xóa hết title"
+                    onClick={clearTags}
                   >
                     ×
                   </button>
-                </span>
-              ))}
-              <input
-                className="tag-input"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={onKeyDown}
-                placeholder="Gõ title, Enter để thêm…"
-              />
+                </div>
+              </div>
+              <p className="dm-hint">
+                Bước 1: People Search (không tốn bulk_match). Bước 2: khi list
+                ổn, bấm <strong>Enrich information</strong> để gọi{" "}
+                <code>people/bulk_match</code> / enrich — email &amp; LinkedIn,
+                tốn credits Apollo.
+              </p>
+              <label className="dm-check">
+                <input
+                  type="checkbox"
+                  checked={includeSimilar}
+                  onChange={(e) => setIncludeSimilar(e.target.checked)}
+                />
+                Include people with similar titles
+              </label>
             </div>
-            <div className="tag-actions">
-              <button
-                type="button"
-                className="tag-icon-btn"
-                aria-label="Xóa hết title"
-                onClick={clearTags}
-              >
-                ×
-              </button>
-            </div>
-          </div>
-          <p className="dm-hint">
-            Bước 1: People Search (không tốn bulk_match). Bước 2: khi list ổn,
-            bấm <strong>Enrich information</strong> để gọi{" "}
-            <code>people/bulk_match</code> / enrich — email &amp; LinkedIn, tốn
-            credits Apollo.
-          </p>
-          <label className="dm-check">
-            <input
-              type="checkbox"
-              checked={includeSimilar}
-              onChange={(e) => setIncludeSimilar(e.target.checked)}
-            />
-            Include people with similar titles
-          </label>
-        </div>
+          </>
+        )}
 
         {err && <div className="modal-error">{err}</div>}
 
-        {unresolvedNames.length > 0 && (
+        {screen === "results" && unresolvedNames.length > 0 && (
           <div className="modal-warn">
             Không resolve được organization_id:{" "}
             <span className="mono">{unresolvedNames.join(", ")}</span> — vẫn tìm
@@ -285,15 +335,12 @@ export function DecisionMakersModal({
           </div>
         )}
 
-        {data && (
+        {screen === "results" && data && (
           <div className="dm-results">
             <div className="dm-results-toolbar">
               <p className="dm-results-meta">
-                Tổng khớp (Apollo): {data.total_entries ?? "—"} · Trả về{" "}
-                {people.length} người (trang 1).
-                {hasAnyContact
-                  ? " Đã có dữ liệu enrich (một phần hoặc toàn bộ) — email / LinkedIn theo Apollo."
-                  : " Chưa enrich — tick dòng rồi bấm Enrich information để lấy email / LinkedIn (tốn credits)."}
+                Tổng khớp (Apollo): {data.total_entries ?? "—"},
+                <strong>Đã chọn {selectedCount} người</strong>
               </p>
               <div className="dm-results-actions">
                 <button
@@ -326,6 +373,37 @@ export function DecisionMakersModal({
                 </button>
               </div>
             </div>
+            {people.length > 0 && (
+              <div
+                className="dm-pagination"
+                role="navigation"
+                aria-label="Phân trang kết quả"
+              >
+                <span className="dm-page-meta">
+                  Trang {currentPage}/{totalPages} · {PAGE_SIZE} người/trang
+                </span>
+                <div className="dm-page-nav">
+                  <button
+                    type="button"
+                    className="dm-page-btn"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    Trước
+                  </button>
+                  <button
+                    type="button"
+                    className="dm-page-btn"
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
+                    disabled={currentPage === totalPages}
+                  >
+                    Sau
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="dm-table-wrap dm-table-wide">
               <table className="dm-table">
                 <thead>
@@ -336,7 +414,7 @@ export function DecisionMakersModal({
                         type="checkbox"
                         checked={allSelected}
                         onChange={toggleSelectAll}
-                        aria-label="Chọn tất cả dòng"
+                        aria-label="Chọn hoặc bỏ chọn tất cả dòng trên trang này (các trang khác không đổi)"
                       />
                     </th>
                     <th>Tên</th>
@@ -347,7 +425,7 @@ export function DecisionMakersModal({
                   </tr>
                 </thead>
                 <tbody>
-                  {people.map((p) => (
+                  {pagedPeople.map((p) => (
                     <tr key={p.id}>
                       <td className="dm-td-check">
                         <input
@@ -396,14 +474,25 @@ export function DecisionMakersModal({
           <button type="button" className="btn-secondary" onClick={onClose}>
             Đóng
           </button>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={loading || enrichLoading || !tags.length}
-            onClick={run}
-          >
-            {loading ? "Đang gọi Apollo search…" : "Chạy Apollo search"}
-          </button>
+          {screen === "results" ? (
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={loading || enrichLoading}
+              onClick={backToSetup}
+            >
+              Quay lại bộ lọc
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={loading || enrichLoading || !tags.length}
+              onClick={run}
+            >
+              {loading ? "Đang gọi Apollo search…" : "Chạy Apollo search"}
+            </button>
+          )}
         </div>
       </div>
     </div>

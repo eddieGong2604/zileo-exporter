@@ -100,6 +100,28 @@ async function fetchPeople(
   return res.json() as Promise<ApolloPeopleSearchResponse>;
 }
 
+async function fetchAllPeoplePages(
+  input: ApolloPeopleSearchInput,
+): Promise<ApolloPeopleSearchResponse> {
+  const perPage = input.per_page ?? 100;
+  const first = await fetchPeople({ ...input, page: input.page ?? 1, per_page: perPage });
+  const totalEntries = first.total_entries ?? first.people?.length ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalEntries / perPage));
+
+  const allPeople: ApolloPerson[] = [...(first.people ?? [])];
+  for (let page = 2; page <= totalPages; page += 1) {
+    const next = await fetchPeople({ ...input, page, per_page: perPage });
+    const chunk = next.people ?? [];
+    if (!chunk.length) break;
+    allPeople.push(...chunk);
+  }
+
+  return {
+    total_entries: first.total_entries,
+    people: allPeople,
+  };
+}
+
 const ENRICH_CHUNK = 10;
 
 async function bulkEnrichMatchesDev(ids: string[]): Promise<unknown[]> {
@@ -174,7 +196,7 @@ export async function fetchApolloDecisionMakers(
     );
   }
 
-  const peopleResponse = await fetchPeople({
+  const peopleResponse = await fetchAllPeoplePages({
     organization_ids,
     person_titles: input.person_titles,
     page: input.page ?? 1,
@@ -183,7 +205,10 @@ export async function fetchApolloDecisionMakers(
   });
 
   const rawPeople = peopleResponse.people ?? [];
-  const people = mergePeopleWithEnrichment(rawPeople, new Map());
+  const uniquePeople = rawPeople.filter(
+    (p, idx, arr) => arr.findIndex((x) => x.id === p.id) === idx,
+  );
+  const people = mergePeopleWithEnrichment(uniquePeople, new Map());
 
   return {
     result: {
