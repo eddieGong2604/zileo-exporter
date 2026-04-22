@@ -1,4 +1,12 @@
-import { useCallback, useId, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import {
   enrichApolloDecisionMakersPeople,
   fetchApolloDecisionMakers,
@@ -47,10 +55,11 @@ export function DecisionMakersModal({
   const [includeSimilar, setIncludeSimilar] = useState(true);
   const [loading, setLoading] = useState(false);
   const [enrichLoading, setEnrichLoading] = useState(false);
-  const [enriched, setEnriched] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [data, setData] = useState<ApolloDecisionMakersResult | null>(null);
   const [unresolvedNames, setUnresolvedNames] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const removeTag = useCallback((i: number) => {
     setTags((prev) => prev.filter((_, j) => j !== i));
@@ -83,7 +92,7 @@ export function DecisionMakersModal({
     setErr(null);
     setData(null);
     setUnresolvedNames([]);
-    setEnriched(false);
+    setSelectedIds(new Set());
     try {
       const { result, unresolved_names } = await fetchApolloDecisionMakers({
         organizationNames,
@@ -102,33 +111,87 @@ export function DecisionMakersModal({
   }, [includeSimilar, organizationNames, tags]);
 
   const runEnrich = useCallback(async () => {
-    if (!data?.people.length || enriched) return;
+    if (!data?.people.length) return;
+    const selected = data.people.filter((p) => selectedIds.has(p.id));
+    const toEnrich = selected.filter((p) => !p.email && !p.linkedin_url);
+    if (!toEnrich.length) return;
     setEnrichLoading(true);
     setErr(null);
     try {
-      const people = await enrichApolloDecisionMakersPeople(data.people);
-      setData((prev) => (prev ? { ...prev, people } : null));
-      setEnriched(true);
+      const enrichedSubset = await enrichApolloDecisionMakersPeople(toEnrich);
+      const byId = new Map(enrichedSubset.map((p) => [p.id, p]));
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              people: prev.people.map((p) => byId.get(p.id) ?? p),
+            }
+          : null,
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Apollo enrich failed");
     } finally {
       setEnrichLoading(false);
     }
-  }, [data, enriched]);
+  }, [data, selectedIds]);
 
   const exportCsv = useCallback(() => {
     if (!data?.people.length) return;
-    const csv = buildDecisionMakersCsv(data.people, countryLabel);
+    const rows = data.people.filter((p) => selectedIds.has(p.id));
+    if (!rows.length) return;
+    const csv = buildDecisionMakersCsv(rows, countryLabel);
     const safeOrg = organizationNames[0]
       ? organizationNames[0].replace(/[^\w\-]+/g, "_").slice(0, 40)
       : "export";
     const stamp = formatFilenameTimestampUtcPlus7();
     downloadTextFile(`decision-makers_${safeOrg}_${stamp}.csv`, csv);
-  }, [countryLabel, data, organizationNames]);
-
-  if (!open) return null;
+  }, [countryLabel, data, organizationNames, selectedIds]);
 
   const people = data?.people ?? [];
+
+  const selectedCount = useMemo(
+    () => people.filter((p) => selectedIds.has(p.id)).length,
+    [people, selectedIds],
+  );
+
+  const allSelected = people.length > 0 && selectedCount === people.length;
+  const someSelected = selectedCount > 0 && !allSelected;
+
+  useEffect(() => {
+    const el = selectAllRef.current;
+    if (el) el.indeterminate = someSelected;
+  }, [someSelected, allSelected]);
+
+  const selectedPeople = useMemo(
+    () => people.filter((p) => selectedIds.has(p.id)),
+    [people, selectedIds],
+  );
+
+  const canEnrichSelection = selectedPeople.some(
+    (p) => !p.email && !p.linkedin_url,
+  );
+
+  const hasAnyContact = people.some((p) => p.email || p.linkedin_url);
+
+  const toggleRow = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) => {
+      if (people.length === 0) return new Set();
+      const allOn = people.every((p) => prev.has(p.id));
+      if (allOn) return new Set();
+      return new Set(people.map((p) => p.id));
+    });
+  }, [people]);
+
+  if (!open) return null;
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
@@ -228,9 +291,9 @@ export function DecisionMakersModal({
               <p className="dm-results-meta">
                 Tổng khớp (Apollo): {data.total_entries ?? "—"} · Trả về{" "}
                 {people.length} người (trang 1).
-                {enriched
-                  ? " Đã enrich — email / LinkedIn theo phản hồi Apollo."
-                  : " Chưa enrich — bấm Enrich information nếu muốn lấy email / LinkedIn (tốn credits)."}
+                {hasAnyContact
+                  ? " Đã có dữ liệu enrich (một phần hoặc toàn bộ) — email / LinkedIn theo Apollo."
+                  : " Chưa enrich — tick dòng rồi bấm Enrich information để lấy email / LinkedIn (tốn credits)."}
               </p>
               <div className="dm-results-actions">
                 <button
@@ -238,20 +301,26 @@ export function DecisionMakersModal({
                   className="btn-enrich"
                   onClick={() => void runEnrich()}
                   disabled={
-                    !people.length || enrichLoading || enriched || loading
+                    !people.length ||
+                    enrichLoading ||
+                    loading ||
+                    selectedCount === 0 ||
+                    !canEnrichSelection
                   }
                 >
                   {enrichLoading
                     ? "Đang enrich…"
-                    : enriched
-                      ? "Đã enrich"
-                      : "Enrich information"}
+                    : selectedCount === 0
+                      ? "Enrich information"
+                      : !canEnrichSelection
+                        ? "Đã có Email/LinkedIn (selection)"
+                        : "Enrich information"}
                 </button>
                 <button
                   type="button"
                   className="btn-export-csv"
                   onClick={exportCsv}
-                  disabled={!people.length}
+                  disabled={!people.length || selectedCount === 0}
                 >
                   Export CSV
                 </button>
@@ -261,6 +330,15 @@ export function DecisionMakersModal({
               <table className="dm-table">
                 <thead>
                   <tr>
+                    <th className="dm-th-check" scope="col">
+                      <input
+                        ref={selectAllRef}
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleSelectAll}
+                        aria-label="Chọn tất cả dòng"
+                      />
+                    </th>
                     <th>Tên</th>
                     <th>Title</th>
                     <th>Công ty</th>
@@ -271,6 +349,14 @@ export function DecisionMakersModal({
                 <tbody>
                   {people.map((p) => (
                     <tr key={p.id}>
+                      <td className="dm-td-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={() => toggleRow(p.id)}
+                          aria-label={`Chọn ${[p.first_name, p.last_name_obfuscated].filter(Boolean).join(" ") || p.id}`}
+                        />
+                      </td>
                       <td>
                         {[p.first_name, p.last_name_obfuscated]
                           .filter(Boolean)

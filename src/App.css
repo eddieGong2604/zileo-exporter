@@ -724,6 +724,13 @@ tr:last-child td {
   color: #475569;
 }
 
+.dm-th-check,
+.dm-td-check {
+  width: 2.25rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .modal-foot {
   display: flex;
   justify-content: flex-end;
