@@ -94,8 +94,6 @@ function isTargetCompany(input: {
   const industry = (input.industry ?? "").toLowerCase();
   if (!industry) return false;
   return (
-    !industry.includes("software development") &&
-    !industry.includes("it services") &&
     !industry.includes("staffing") &&
     !industry.includes("headhunting") &&
     !industry.includes("human resources")
