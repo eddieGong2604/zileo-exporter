@@ -24,6 +24,23 @@
   font-size: 0.95rem;
 }
 
+.route-links {
+  margin-top: 0.65rem;
+  display: flex;
+  gap: 0.8rem;
+}
+
+.route-links a {
+  font-size: 0.88rem;
+  color: #1d4ed8;
+}
+
+.route-links a[aria-current="page"] {
+  font-weight: 650;
+  color: #0f172a;
+  text-decoration: none;
+}
+
 .panel {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
@@ -75,6 +92,14 @@
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+.toggle-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #334155;
+  font-size: 0.9rem;
 }
 
 .actions button {
@@ -162,6 +187,20 @@ th {
   background: #fff;
   font-weight: 600;
   color: #475569;
+}
+
+.th-sort-btn {
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sort-hint {
+  color: #94a3b8;
 }
 
 tr:last-child td {
@@ -426,6 +465,75 @@ tr:last-child td {
   height: 1rem;
   margin: 0;
   cursor: pointer;
+}
+
+.grouped-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.group-card .meta-bar {
+  font-weight: 600;
+}
+
+.company-fields-bar {
+  background: #fff;
+  font-weight: 400 !important;
+}
+
+.column-picker-bar {
+  background: #fff;
+}
+
+.column-picker-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.column-btn {
+  font: inherit;
+  font-size: 0.78rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+
+.column-picker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+}
+
+.column-toggle-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.8rem;
+}
+
+.company-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 280px;
+}
+
+.company-detail-row {
+  font-size: 0.78rem;
+  color: #334155;
+  line-height: 1.4;
+}
+
+.company-detail-row strong {
+  color: #0f172a;
 }
 
 .modal-backdrop {

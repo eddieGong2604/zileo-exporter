@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCompanies } from "./api/companies";
 import { fetchCompanyRevealV2 } from "./api/revealCompanyV2";
 import { DecisionMakersModal } from "./components/DecisionMakersModal";
+import { EnrichedPage } from "./components/EnrichedPage";
 import { createLogger } from "./lib/logger";
 import { COUNTRY_OPTIONS } from "./data/countries";
 import {
@@ -101,6 +102,11 @@ function isTargetCompany(input: {
 }
 
 export default function App() {
+  const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (pathname === "/enriched") {
+    return <EnrichedPage />;
+  }
+
   const [datePosted, setDatePosted] = useState<DatePostedFilter>("ONE_DAY_AGO");
   const [pageInput, setPageInput] = useState("1");
   const [limitInput, setLimitInput] = useState("10");
@@ -288,6 +294,12 @@ export default function App() {
       <header className="header">
         <h1>Zileo Exporter</h1>
         <p className="subtitle">Công ty đăng tin gần đây</p>
+        <div className="route-links">
+          <a href="/" aria-current="page">
+            Search
+          </a>
+          <a href="/enriched">Enriched</a>
+        </div>
       </header>
 
       <section className="panel">

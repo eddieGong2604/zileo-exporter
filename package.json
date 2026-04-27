@@ -10,11 +10,14 @@
     "vercel:dev": "npx vercel dev"
   },
   "dependencies": {
+    "dayjs": "^1.11.20",
+    "pg": "^8.20.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",

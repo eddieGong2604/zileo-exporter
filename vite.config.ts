@@ -5,6 +5,7 @@ import type { Plugin } from "vite";
 import { createLogger } from "./lib/logger.js";
 import { revealCompanyWithOpenAI } from "./lib/revealCompanyOpenAI";
 import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
+import { listEnrichedContacts } from "./lib/enrichedContactsRepo.js";
 
 const devRevealLog = createLogger("vite/reveal-dev-api");
 
@@ -108,6 +109,32 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
               }
             })();
           });
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "GET" || pathname !== "/api/enriched-contacts") {
+            next();
+            return;
+          }
+
+          void (async () => {
+            try {
+              const data = await listEnrichedContacts(
+                env.POSTGRES_URL || env.DATABASE_URL,
+              );
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ data }));
+            } catch (e) {
+              const msg =
+                e instanceof Error ? e.message : "Failed to load enriched contacts";
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ error: msg }));
+            }
+          })();
         },
       );
     },
