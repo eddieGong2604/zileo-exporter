@@ -10,6 +10,16 @@ type ColumnDef = {
 };
 type SortDirection = "asc" | "desc";
 type SortState = { key: string; direction: SortDirection } | null;
+const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
+  "company.source_company_name",
+  "company.company_description",
+  "company.source_latest_job_posted_at",
+  "company.status",
+  "company.rejection_reason",
+  "contact.contact_name",
+  "contact.contact_linkedin",
+  "contact.contact_location",
+]);
 
 const CONTACT_COLUMN_DEFS: ColumnDef[] = [
   { key: "contact.id", label: "Contact Id", getValue: (row) => row.id },
@@ -97,7 +107,7 @@ function companyColumns(rows: EnrichedContact[]): ColumnDef[] {
 }
 
 function allColumns(rows: EnrichedContact[]): ColumnDef[] {
-  return [...CONTACT_COLUMN_DEFS, ...companyColumns(rows)];
+  return [...companyColumns(rows), ...CONTACT_COLUMN_DEFS];
 }
 
 function sortColumnsByVisibility(
@@ -147,6 +157,8 @@ export function EnrichedPage() {
   const [groupByCompany, setGroupByCompany] = useState(false);
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<Set<string>>(new Set());
   const [sortState, setSortState] = useState<SortState>(null);
+  const [columnConfigOpen, setColumnConfigOpen] = useState(false);
+  const [initializedVisibleColumns, setInitializedVisibleColumns] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -166,16 +178,26 @@ export function EnrichedPage() {
   const columns = useMemo(() => allColumns(rows), [rows]);
 
   useEffect(() => {
+    if (!columns.length) return;
+
+    if (!initializedVisibleColumns) {
+      const hasCompanyColumns = columns.some((column) => column.key.startsWith("company."));
+      if (!hasCompanyColumns && rows.length === 0) return;
+      const defaults = columns
+        .map((column) => column.key)
+        .filter((key) => DEFAULT_VISIBLE_COLUMN_KEYS.has(key));
+      setVisibleColumnKeys(
+        new Set(defaults.length > 0 ? defaults : columns.map((column) => column.key)),
+      );
+      setInitializedVisibleColumns(true);
+      return;
+    }
+
     setVisibleColumnKeys((prev) => {
-      if (!columns.length) return prev;
-      if (prev.size === 0) return new Set(columns.map((column) => column.key));
-      const next = new Set<string>();
-      for (const column of columns) {
-        if (prev.has(column.key)) next.add(column.key);
-      }
-      return next.size === 0 ? new Set(columns.map((column) => column.key)) : next;
+      const columnKeys = new Set(columns.map((column) => column.key));
+      return new Set(Array.from(prev).filter((key) => columnKeys.has(key)));
     });
-  }, [columns]);
+  }, [columns, initializedVisibleColumns, rows.length]);
 
   const visibleColumns = useMemo(
     () => sortColumnsByVisibility(columns, visibleColumnKeys),
@@ -224,7 +246,7 @@ export function EnrichedPage() {
   };
 
   return (
-    <div className="app">
+    <div className="app app--wide app--dense">
       <header className="header">
         <h1>Enriched Contacts</h1>
         <p className="subtitle">All contacts with their linked company record</p>
@@ -246,6 +268,13 @@ export function EnrichedPage() {
             />
             <span>Group by company</span>
           </label>
+          <button
+            type="button"
+            className="column-btn"
+            onClick={() => setColumnConfigOpen(true)}
+          >
+            Configure columns
+          </button>
         </div>
       </section>
 
@@ -254,44 +283,8 @@ export function EnrichedPage() {
 
       {!loading && !error && !groupByCompany && (
         <section className="results">
-          <div className="meta-bar">{rows.length} contacts</div>
-          <div className="meta-bar column-picker-bar">
-            <div className="column-picker-top">
-              <strong>Columns:</strong>
-              <button
-                type="button"
-                className="column-btn"
-                onClick={() => setVisibleColumnKeys(new Set(columns.map((col) => col.key)))}
-              >
-                Show all
-              </button>
-              <button
-                type="button"
-                className="column-btn"
-                onClick={() => setVisibleColumnKeys(new Set())}
-              >
-                Hide all
-              </button>
-            </div>
-            <div className="column-picker-list">
-              {columns.map((column) => (
-                <label key={column.key} className="column-toggle-item">
-                  <input
-                    type="checkbox"
-                    checked={visibleColumnKeys.has(column.key)}
-                    onChange={(e) => {
-                      setVisibleColumnKeys((prev) => {
-                        const next = new Set(prev);
-                        if (e.target.checked) next.add(column.key);
-                        else next.delete(column.key);
-                        return next;
-                      });
-                    }}
-                  />
-                  <span>{column.label}</span>
-                </label>
-              ))}
-            </div>
+          <div className="meta-bar meta-bar-row">
+            <span>{rows.length} contacts</span>
           </div>
           <div className="table-wrap">
             <table>
@@ -329,6 +322,78 @@ export function EnrichedPage() {
             </table>
           </div>
         </section>
+      )}
+
+      {columnConfigOpen && (
+        <div className="modal-backdrop" onClick={() => setColumnConfigOpen(false)}>
+          <div className="modal column-config-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Configure columns</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setColumnConfigOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="dm-results">
+              <div className="column-picker-top">
+                <button
+                  type="button"
+                  className="column-btn"
+                  onClick={() => setVisibleColumnKeys(new Set(columns.map((col) => col.key)))}
+                >
+                  Show all
+                </button>
+                <button
+                  type="button"
+                  className="column-btn"
+                  onClick={() => {
+                    const defaults = columns
+                      .map((column) => column.key)
+                      .filter((key) => DEFAULT_VISIBLE_COLUMN_KEYS.has(key));
+                    setVisibleColumnKeys(
+                      new Set(
+                        defaults.length > 0 ? defaults : columns.map((column) => column.key),
+                      ),
+                    );
+                  }}
+                >
+                  Reset default
+                </button>
+              </div>
+              <div className="column-picker-list">
+                {columns.map((column) => (
+                  <label key={column.key} className="column-toggle-item">
+                    <input
+                      type="checkbox"
+                      checked={visibleColumnKeys.has(column.key)}
+                      onChange={(e) => {
+                        setVisibleColumnKeys((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(column.key);
+                          else next.delete(column.key);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span>{column.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setColumnConfigOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {!loading && !error && groupByCompany && (

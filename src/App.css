@@ -7,6 +7,17 @@
   line-height: 1.5;
 }
 
+.app--wide {
+  max-width: none;
+  width: 100%;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+.app--dense {
+  font-size: 0.93rem;
+}
+
 .header {
   margin-bottom: 1.5rem;
 }
@@ -157,6 +168,7 @@
 
 .table-wrap {
   overflow-x: auto;
+  width: 100%;
 }
 
 table {
@@ -201,6 +213,21 @@ th {
 
 .sort-hint {
   color: #94a3b8;
+}
+
+.app--dense table {
+  font-size: 0.78rem;
+}
+
+.app--dense th,
+.app--dense td {
+  padding: 0.38rem 0.5rem;
+  line-height: 1.28;
+}
+
+.app--dense .meta-bar {
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem;
 }
 
 tr:last-child td {
@@ -505,6 +532,13 @@ tr:last-child td {
   cursor: pointer;
 }
 
+.actions .column-btn {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  padding: 0.45rem 0.9rem;
+}
+
 .column-picker-list {
   display: flex;
   flex-wrap: wrap;
@@ -517,6 +551,10 @@ tr:last-child td {
   gap: 0.35rem;
   color: #334155;
   font-size: 0.8rem;
+}
+
+.column-config-modal {
+  width: min(860px, 100%);
 }
 
 .company-detail-list {
