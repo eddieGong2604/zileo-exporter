@@ -1,0 +1,28 @@
+export const config = { runtime: "nodejs" };
+
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { listMeetAlfredCampaigns } from "../lib/meetAlfred.js";
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(payload));
+}
+
+export default async function handler(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (req.method !== "GET") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
+  }
+  try {
+    const campaigns = await listMeetAlfredCampaigns();
+    sendJson(res, 200, { campaigns });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to load Meet Alfred campaigns";
+    sendJson(res, 500, { error: message });
+  }
+}

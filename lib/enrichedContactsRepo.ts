@@ -6,7 +6,9 @@ const log = createLogger("lib/enrichedContactsRepo");
 export type EnrichedContact = {
   id: number | null;
   companyId: number | null;
+  firstName: string | null;
   contactName: string | null;
+  title: string | null;
   contactLinkedin: string | null;
   apolloProfileHref: string | null;
   contactLocation: string | null;
@@ -51,7 +53,9 @@ export async function listEnrichedContacts(
         SELECT
           ct.id,
           cp.id AS "companyId",
+          ct.first_name AS "firstName",
           ct.contact_name AS "contactName",
+          ct.title,
           ct.contact_linkedin AS "contactLinkedin",
           ct.apollo_profile_href AS "apolloProfileHref",
           ct.contact_location AS "contactLocation",

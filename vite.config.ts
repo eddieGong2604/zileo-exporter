@@ -6,6 +6,10 @@ import { createLogger } from "./lib/logger.js";
 import { revealCompanyWithOpenAI } from "./lib/revealCompanyOpenAI";
 import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
 import { listEnrichedContacts } from "./lib/enrichedContactsRepo.js";
+import {
+  addLeadsToMeetAlfredCampaign,
+  listMeetAlfredCampaigns,
+} from "./lib/meetAlfred.js";
 
 const devRevealLog = createLogger("vite/reveal-dev-api");
 
@@ -135,6 +139,101 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
               res.end(JSON.stringify({ error: msg }));
             }
           })();
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "GET" || pathname !== "/api/meet-alfred-campaigns") {
+            next();
+            return;
+          }
+          void (async () => {
+            try {
+              const campaigns = await listMeetAlfredCampaigns();
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ campaigns }));
+            } catch (e) {
+              const msg =
+                e instanceof Error
+                  ? e.message
+                  : "Failed to load Meet Alfred campaigns";
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ error: msg }));
+            }
+          })();
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "POST" || pathname !== "/api/meet-alfred-bulk-send") {
+            next();
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          req.on("end", () => {
+            void (async () => {
+              try {
+                const raw = Buffer.concat(chunks).toString("utf8");
+                const body = JSON.parse(raw) as {
+                  webhookKey?: string;
+                  campaignId?: number;
+                  leads?: Array<{
+                    linkedin_profile_url?: string;
+                    csv_firstname?: string;
+                    csv_companyname?: string;
+                    csv_email?: string;
+                    csv_country?: string;
+                  }>;
+                };
+                const webhookKey = (body.webhookKey ?? "").trim();
+                const campaignId = Number(body.campaignId);
+                const leads = Array.isArray(body.leads) ? body.leads : [];
+                if (!webhookKey) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(JSON.stringify({ error: "webhookKey is required" }));
+                  return;
+                }
+                if (!Number.isFinite(campaignId) || campaignId <= 0) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(
+                    JSON.stringify({
+                      error: "campaignId must be a positive number",
+                    }),
+                  );
+                  return;
+                }
+                const result = await addLeadsToMeetAlfredCampaign({
+                  webhookKey,
+                  campaignId,
+                  leads: leads.map((lead) => ({
+                    linkedin_profile_url: (lead.linkedin_profile_url ?? "").trim(),
+                    csv_firstname: (lead.csv_firstname ?? "").trim(),
+                    csv_companyname: (lead.csv_companyname ?? "").trim(),
+                    csv_email: (lead.csv_email ?? "").trim(),
+                    csv_country: (lead.csv_country ?? "").trim(),
+                  })),
+                });
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify(result));
+              } catch (e) {
+                const msg =
+                  e instanceof Error ? e.message : "Failed to send Meet Alfred leads";
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ error: msg }));
+              }
+            })();
+          });
         },
       );
     },

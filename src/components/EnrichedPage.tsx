@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import { fetchEnrichedContacts } from "../api/enrichedContacts";
+import { bulkSendMeetAlfred, fetchMeetAlfredCampaigns } from "../api/meetAlfred";
 import type { EnrichedContact } from "../types/enriched";
 
 type ColumnDef = {
@@ -11,6 +12,12 @@ type ColumnDef = {
 type SortDirection = "asc" | "desc";
 type SortState = { key: string; direction: SortDirection } | null;
 type CompanyStatusFilter = "all" | "approved" | "queued" | "rejected";
+type MeetAlfredCampaign = {
+  id: number;
+  label: string;
+  status?: string;
+  webhookKey: string;
+};
 
 const SOURCE_COUNTRY_OPTIONS = [
   "Australia",
@@ -26,7 +33,9 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
   "company.source_latest_job_posted_at",
   "company.status",
   "company.rejection_reason",
+  "contact.first_name",
   "contact.contact_name",
+  "contact.title",
   "contact.contact_linkedin",
   "contact.contact_location",
   "contact.predicted_origin_of_name",
@@ -37,7 +46,9 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
 const CONTACT_COLUMN_DEFS: ColumnDef[] = [
   { key: "contact.id", label: "Contact Id", getValue: (row) => row.id },
   { key: "contact.company_id", label: "Contact Company Id", getValue: (row) => row.companyId },
+  { key: "contact.first_name", label: "First Name", getValue: (row) => row.firstName },
   { key: "contact.contact_name", label: "Contact Name", getValue: (row) => row.contactName },
+  { key: "contact.title", label: "Title", getValue: (row) => row.title },
   {
     key: "contact.contact_linkedin",
     label: "Contact Linkedin",
@@ -183,6 +194,14 @@ function buildRowKey(row: EnrichedContact, index: number): string {
   return `${companyId}-${contactId}-${index}`;
 }
 
+function selectionKeyForRow(row: EnrichedContact): string {
+  const companyId = String(row.company?.id ?? row.companyId ?? "");
+  const contactId = String(row.id ?? "");
+  const linkedin = (row.contactLinkedin ?? "").trim().toLowerCase();
+  const name = (row.contactName ?? "").trim().toLowerCase();
+  return `${companyId}::${contactId}::${linkedin}::${name}`;
+}
+
 function isTruthyBlacklistFlag(value: unknown): boolean {
   if (value === true) return true;
   if (typeof value === "string") {
@@ -256,6 +275,61 @@ function filterSummary(
   return parts.join(" · ");
 }
 
+function csvEscape(value: string): string {
+  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+function firstNameFromContactName(name: string | null): string {
+  const normalized = (name ?? "").trim();
+  if (!normalized) return "";
+  return normalized.split(/\s+/)[0] ?? "";
+}
+
+function firstNameFromRow(row: EnrichedContact): string {
+  const fromField = (row.firstName ?? "").trim();
+  if (fromField) return fromField;
+  return firstNameFromContactName(row.contactName);
+}
+
+function companyNameFromRow(row: EnrichedContact): string {
+  const raw = row.company?.source_company_name;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+function companyCountryFromRow(row: EnrichedContact): string {
+  const raw = row.company?.source_country;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+function exportRowsToCsv(rows: EnrichedContact[]): void {
+  const headers = ["linkedin_url", "firstname", "companyname", "email", "country"];
+  const lines = [headers.join(",")];
+  for (const row of rows) {
+    const values = [
+      (row.contactLinkedin ?? "").trim(),
+      firstNameFromRow(row),
+      companyNameFromRow(row),
+      (row.email ?? "").trim(),
+      companyCountryFromRow(row),
+    ].map(csvEscape);
+    lines.push(values.join(","));
+  }
+
+  const csv = lines.join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `enriched_contacts_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export function EnrichedPage() {
   const [rows, setRows] = useState<EnrichedContact[]>([]);
   const [loading, setLoading] = useState(false);
@@ -272,6 +346,14 @@ export function EnrichedPage() {
     () => new Set(DEFAULT_SOURCE_COUNTRY_SELECTION),
   );
   const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
+  const [meetAlfredModalOpen, setMeetAlfredModalOpen] = useState(false);
+  const [campaignsLoading, setCampaignsLoading] = useState(false);
+  const [campaignsError, setCampaignsError] = useState<string | null>(null);
+  const [campaigns, setCampaigns] = useState<MeetAlfredCampaign[]>([]);
+  const [selectedCampaignComposite, setSelectedCampaignComposite] = useState("");
+  const [sendingToMeetAlfred, setSendingToMeetAlfred] = useState(false);
+  const [sendResultMessage, setSendResultMessage] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -365,6 +447,22 @@ export function EnrichedPage() {
     return sorted;
   }, [columns, filteredRows, sortState]);
 
+  useEffect(() => {
+    const validKeys = new Set(sortedRows.map(selectionKeyForRow));
+    setSelectedRowKeys((prev) => {
+      const next = new Set<string>();
+      for (const key of prev) {
+        if (validKeys.has(key)) next.add(key);
+      }
+      return next;
+    });
+  }, [sortedRows]);
+
+  const allFilteredSelected =
+    sortedRows.length > 0 && sortedRows.every((row) => selectedRowKeys.has(selectionKeyForRow(row)));
+
+  const selectedCount = selectedRowKeys.size;
+
   const grouped = useMemo(() => {
     if (!groupByCompany) return [];
     const map = new Map<string, EnrichedContact[]>();
@@ -389,6 +487,94 @@ export function EnrichedPage() {
       if (prev.direction === "asc") return { key: columnKey, direction: "desc" };
       return null;
     });
+  };
+
+  const toggleRowSelection = (row: EnrichedContact) => {
+    const key = selectionKeyForRow(row);
+    setSelectedRowKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleSelectAllFiltered = () => {
+    setSelectedRowKeys((prev) => {
+      const next = new Set(prev);
+      const keys = sortedRows.map(selectionKeyForRow);
+      const currentlyAllSelected =
+        keys.length > 0 && keys.every((key) => next.has(key));
+      if (currentlyAllSelected) {
+        for (const key of keys) next.delete(key);
+      } else {
+        for (const key of keys) next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const exportSelectedRows = () => {
+    const selectedRows = sortedRows.filter((row) =>
+      selectedRowKeys.has(selectionKeyForRow(row)),
+    );
+    if (!selectedRows.length) return;
+    exportRowsToCsv(selectedRows);
+  };
+
+  const openMeetAlfredModal = async () => {
+    setMeetAlfredModalOpen(true);
+    setSendResultMessage(null);
+    if (campaigns.length > 0) return;
+    setCampaignsLoading(true);
+    setCampaignsError(null);
+    try {
+      const list = await fetchMeetAlfredCampaigns();
+      setCampaigns(list);
+      if (list.length > 0) {
+        setSelectedCampaignComposite(`${list[0].webhookKey}::${list[0].id}`);
+      }
+    } catch (e) {
+      setCampaignsError(e instanceof Error ? e.message : "Failed to load campaigns");
+    } finally {
+      setCampaignsLoading(false);
+    }
+  };
+
+  const sendSelectedToMeetAlfred = async () => {
+    const selectedRows = sortedRows.filter((row) =>
+      selectedRowKeys.has(selectionKeyForRow(row)),
+    );
+    if (selectedRows.length === 0) return;
+    const [webhookKey, campaignIdRaw] = selectedCampaignComposite.split("::");
+    const campaignId = Number(campaignIdRaw);
+    if (!webhookKey || !Number.isFinite(campaignId)) {
+      setSendResultMessage("Please select a campaign");
+      return;
+    }
+    setSendingToMeetAlfred(true);
+    setCampaignsError(null);
+    setSendResultMessage(null);
+    try {
+      const result = await bulkSendMeetAlfred({
+        webhookKey,
+        campaignId,
+        leads: selectedRows.map((row) => ({
+          linkedin_profile_url: (row.contactLinkedin ?? "").trim(),
+          csv_firstname: firstNameFromRow(row),
+          csv_companyname: companyNameFromRow(row),
+          csv_email: (row.email ?? "").trim(),
+          csv_country: companyCountryFromRow(row),
+        })),
+      });
+      setSendResultMessage(
+        `Sent ${result.sent}/${result.attempted} leads (failed: ${result.failed}).`,
+      );
+    } catch (e) {
+      setCampaignsError(e instanceof Error ? e.message : "Failed to send leads");
+    } finally {
+      setSendingToMeetAlfred(false);
+    }
   };
 
   return (
@@ -458,11 +644,45 @@ export function EnrichedPage() {
                 )}
               </span>
             </span>
+            <div className="meta-actions">
+              <span className="selection-cart">
+                Selected: <strong>{selectedCount}</strong>
+              </span>
+              <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
+                {allFilteredSelected ? "Unselect all" : "Select all"}
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0}
+                onClick={exportSelectedRows}
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0}
+                onClick={() => void openMeetAlfredModal()}
+              >
+                Bulk Send To Meet Alfred
+              </button>
+            </div>
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th className="th-check">
+                    <span className="check-cell">
+                      <input
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAllFiltered}
+                        aria-label="Select all filtered rows"
+                      />
+                    </span>
+                  </th>
                   {visibleColumns.map((column) => (
                     <th key={column.key}>
                       <button
@@ -484,6 +704,16 @@ export function EnrichedPage() {
               <tbody>
                 {sortedRows.map((row, idx) => (
                   <tr key={buildRowKey(row, idx)}>
+                    <td className="td-check">
+                      <span className="check-cell">
+                        <input
+                          type="checkbox"
+                          checked={selectedRowKeys.has(selectionKeyForRow(row))}
+                          onChange={() => toggleRowSelection(row)}
+                          aria-label="Select row"
+                        />
+                      </span>
+                    </td>
                     {visibleColumns.map((column) => (
                       <td key={`${buildRowKey(row, idx)}-${column.key}`}>
                         {displayValue(column.getValue(row), column.key)}
@@ -612,6 +842,74 @@ export function EnrichedPage() {
         </div>
       )}
 
+      {meetAlfredModalOpen && (
+        <div className="modal-backdrop" onClick={() => setMeetAlfredModalOpen(false)}>
+          <div className="modal filter-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Send To Meet Alfred</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setMeetAlfredModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="filter-modal-body">
+              <p className="filter-fieldset-hint">
+                Selected leads: <strong>{selectedCount}</strong>
+              </p>
+              <label className="field">
+                <span>Campaign</span>
+                <select
+                  value={selectedCampaignComposite}
+                  onChange={(e) => setSelectedCampaignComposite(e.target.value)}
+                  disabled={campaignsLoading || campaigns.length === 0}
+                >
+                  {campaigns.length === 0 ? (
+                    <option value="">No campaigns available</option>
+                  ) : (
+                    campaigns.map((c) => (
+                      <option
+                        key={`${c.webhookKey}-${c.id}`}
+                        value={`${c.webhookKey}::${c.id}`}
+                      >
+                        {c.label} (id: {c.id})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              {campaignsLoading && <div className="meta-filter-hint">Loading campaigns...</div>}
+              {campaignsError && <div className="error">{campaignsError}</div>}
+              {sendResultMessage && <div className="meta-bar">{sendResultMessage}</div>}
+            </div>
+            <div className="modal-foot filter-modal-foot">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setMeetAlfredModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={
+                  sendingToMeetAlfred ||
+                  campaignsLoading ||
+                  selectedCount === 0 ||
+                  !selectedCampaignComposite
+                }
+                onClick={() => void sendSelectedToMeetAlfred()}
+              >
+                {sendingToMeetAlfred ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {columnConfigOpen && (
         <div className="modal-backdrop" onClick={() => setColumnConfigOpen(false)}>
           <div className="modal column-config-modal" onClick={(e) => e.stopPropagation()}>
@@ -686,6 +984,47 @@ export function EnrichedPage() {
 
       {!loading && !error && groupByCompany && (
         <div className="grouped-wrap">
+          <div className="results">
+            <div className="meta-bar meta-bar-row">
+              <span>
+                {sortedRows.length} contacts
+                <span className="meta-filter-hint">
+                  {" "}
+                  ·{" "}
+                  {filterSummary(
+                    statusFilter,
+                    excludePredictedOriginBlacklist,
+                    excludeContactLocationBlacklist,
+                    sourceCountrySelection,
+                  )}
+                </span>
+              </span>
+              <div className="meta-actions">
+                <span className="selection-cart">
+                  Selected: <strong>{selectedCount}</strong>
+                </span>
+                <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
+                  {allFilteredSelected ? "Unselect all" : "Select all"}
+                </button>
+                <button
+                  type="button"
+                  className="column-btn"
+                  disabled={selectedCount === 0}
+                  onClick={exportSelectedRows}
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  className="column-btn"
+                  disabled={selectedCount === 0}
+                  onClick={() => void openMeetAlfredModal()}
+                >
+                  Bulk Send To Meet Alfred
+                </button>
+              </div>
+            </div>
+          </div>
           {grouped.map((item) => (
             <section className="results group-card" key={item.company}>
               <div className="meta-bar">
@@ -695,6 +1034,34 @@ export function EnrichedPage() {
                 <table>
                   <thead>
                     <tr>
+                      <th className="th-check">
+                        <span className="check-cell">
+                          <input
+                            type="checkbox"
+                            checked={
+                              item.contacts.length > 0 &&
+                              item.contacts.every((row) =>
+                                selectedRowKeys.has(selectionKeyForRow(row)),
+                              )
+                            }
+                            onChange={() => {
+                              setSelectedRowKeys((prev) => {
+                                const next = new Set(prev);
+                                const keys = item.contacts.map(selectionKeyForRow);
+                                const allInGroupSelected =
+                                  keys.length > 0 && keys.every((key) => next.has(key));
+                                if (allInGroupSelected) {
+                                  for (const key of keys) next.delete(key);
+                                } else {
+                                  for (const key of keys) next.add(key);
+                                }
+                                return next;
+                              });
+                            }}
+                            aria-label={`Select all rows for ${item.company}`}
+                          />
+                        </span>
+                      </th>
                       {visibleColumns.map((column) => (
                         <th key={column.key}>
                           <button
@@ -716,6 +1083,16 @@ export function EnrichedPage() {
                   <tbody>
                     {item.contacts.map((row, idx) => (
                       <tr key={buildRowKey(row, idx)}>
+                        <td className="td-check">
+                          <span className="check-cell">
+                            <input
+                              type="checkbox"
+                              checked={selectedRowKeys.has(selectionKeyForRow(row))}
+                              onChange={() => toggleRowSelection(row)}
+                              aria-label="Select row"
+                            />
+                          </span>
+                        </td>
                         {visibleColumns.map((column) => (
                           <td key={`${buildRowKey(row, idx)}-${column.key}`}>
                             {displayValue(column.getValue(row), column.key)}

@@ -1,7 +1,9 @@
 export type EnrichedContact = {
   id: number | null;
   companyId: number | null;
+  firstName: string | null;
   contactName: string | null;
+  title: string | null;
   contactLinkedin: string | null;
   apolloProfileHref: string | null;
   contactLocation: string | null;
