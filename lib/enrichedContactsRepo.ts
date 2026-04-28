@@ -12,6 +12,10 @@ export type EnrichedContact = {
   contactLocation: string | null;
   source: string | null;
   email: string | null;
+  predictedOriginOfName: string | null;
+  countryId: string | number | null;
+  isPredictedOriginBlacklisted: boolean | null;
+  isContactLocationBlacklisted: boolean | null;
   createdAt: string;
   updatedAt: string;
   company: Record<string, unknown> | null;
@@ -53,6 +57,10 @@ export async function listEnrichedContacts(
           ct.contact_location AS "contactLocation",
           ct.source,
           ct.email,
+          ct.predicted_origin_of_name AS "predictedOriginOfName",
+          ct.country_id AS "countryId",
+          ct.is_predicted_origin_blacklisted AS "isPredictedOriginBlacklisted",
+          ct.is_contact_location_blacklisted AS "isContactLocationBlacklisted",
           ct.created_at AS "createdAt",
           ct.updated_at AS "updatedAt",
           row_to_json(cp) AS company

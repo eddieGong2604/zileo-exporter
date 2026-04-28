@@ -7,6 +7,10 @@ export type EnrichedContact = {
   contactLocation: string | null;
   source: string | null;
   email: string | null;
+  predictedOriginOfName: string | null;
+  countryId: string | number | null;
+  isPredictedOriginBlacklisted: boolean | null;
+  isContactLocationBlacklisted: boolean | null;
   createdAt: string;
   updatedAt: string;
   company: Record<string, unknown> | null;

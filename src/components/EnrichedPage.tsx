@@ -10,6 +10,16 @@ type ColumnDef = {
 };
 type SortDirection = "asc" | "desc";
 type SortState = { key: string; direction: SortDirection } | null;
+type CompanyStatusFilter = "all" | "approved" | "queued" | "rejected";
+
+const SOURCE_COUNTRY_OPTIONS = [
+  "Australia",
+  "United States",
+  "United Kingdom",
+] as const;
+
+const DEFAULT_SOURCE_COUNTRY_SELECTION = new Set<string>(["Australia"]);
+
 const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
   "company.source_company_name",
   "company.company_description",
@@ -19,6 +29,9 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
   "contact.contact_name",
   "contact.contact_linkedin",
   "contact.contact_location",
+  "contact.predicted_origin_of_name",
+  "contact.is_predicted_origin_blacklisted",
+  "contact.is_contact_location_blacklisted",
 ]);
 
 const CONTACT_COLUMN_DEFS: ColumnDef[] = [
@@ -39,6 +52,26 @@ const CONTACT_COLUMN_DEFS: ColumnDef[] = [
     key: "contact.contact_location",
     label: "Contact Location",
     getValue: (row) => row.contactLocation,
+  },
+  {
+    key: "contact.predicted_origin_of_name",
+    label: "Predicted Origin",
+    getValue: (row) => row.predictedOriginOfName,
+  },
+  {
+    key: "contact.country_id",
+    label: "Country Id",
+    getValue: (row) => row.countryId,
+  },
+  {
+    key: "contact.is_predicted_origin_blacklisted",
+    label: "Origin Blacklisted",
+    getValue: (row) => row.isPredictedOriginBlacklisted,
+  },
+  {
+    key: "contact.is_contact_location_blacklisted",
+    label: "Location Blacklisted",
+    getValue: (row) => row.isContactLocationBlacklisted,
   },
   { key: "contact.source", label: "Contact Source", getValue: (row) => row.source },
   { key: "contact.email", label: "Contact Email", getValue: (row) => row.email },
@@ -150,15 +183,95 @@ function buildRowKey(row: EnrichedContact, index: number): string {
   return `${companyId}-${contactId}-${index}`;
 }
 
+function isTruthyBlacklistFlag(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
+    return s === "true" || s === "t" || s === "1" || s === "yes";
+  }
+  return false;
+}
+
+function normalizeSourceCountry(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** True when DB `source_country` matches one of the canonical options (with common aliases). */
+function sourceCountryMatchesOption(dbValue: string, option: string): boolean {
+  const n = normalizeSourceCountry(dbValue);
+  if (normalizeSourceCountry(option) === n) return true;
+  if (option === "Australia") {
+    return n === "au" || n === "aus";
+  }
+  if (option === "United States") {
+    return (
+      n === "usa" ||
+      n === "us" ||
+      n === "u.s." ||
+      n === "u.s.a." ||
+      n === "united states of america"
+    );
+  }
+  if (option === "United Kingdom") {
+    return n === "uk" || n === "gb" || n === "great britain";
+  }
+  return false;
+}
+
+function rowMatchesSourceCountryFilter(
+  row: EnrichedContact,
+  selected: ReadonlySet<string>,
+): boolean {
+  if (selected.size === 0) return true;
+  const raw = row.company?.source_country;
+  if (typeof raw !== "string" || !raw.trim()) return false;
+  for (const opt of selected) {
+    if (sourceCountryMatchesOption(raw, opt)) return true;
+  }
+  return false;
+}
+
+function filterSummary(
+  status: CompanyStatusFilter,
+  excludeOriginBlacklist: boolean,
+  excludeLocationBlacklist: boolean,
+  sourceCountries: ReadonlySet<string>,
+): string {
+  const statusPart =
+    status === "all" ? "All statuses" : `${status[0]!.toUpperCase()}${status.slice(1)}`;
+  const parts = [statusPart];
+  parts.push(
+    excludeOriginBlacklist ? "Origin not blacklisted" : "Any origin blacklist",
+  );
+  parts.push(
+    excludeLocationBlacklist ? "Location not blacklisted" : "Any location blacklist",
+  );
+  if (sourceCountries.size === 0) {
+    parts.push("All source countries");
+  } else {
+    parts.push(
+      `Source country: ${[...sourceCountries].sort((a, b) => a.localeCompare(b)).join(", ")}`,
+    );
+  }
+  return parts.join(" · ");
+}
+
 export function EnrichedPage() {
   const [rows, setRows] = useState<EnrichedContact[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [groupByCompany, setGroupByCompany] = useState(false);
+  const [groupByCompany, setGroupByCompany] = useState(true);
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<Set<string>>(new Set());
   const [sortState, setSortState] = useState<SortState>(null);
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const [initializedVisibleColumns, setInitializedVisibleColumns] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<CompanyStatusFilter>("approved");
+  const [excludePredictedOriginBlacklist, setExcludePredictedOriginBlacklist] = useState(true);
+  const [excludeContactLocationBlacklist, setExcludeContactLocationBlacklist] = useState(true);
+  const [sourceCountrySelection, setSourceCountrySelection] = useState<Set<string>>(
+    () => new Set(DEFAULT_SOURCE_COUNTRY_SELECTION),
+  );
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -204,11 +317,44 @@ export function EnrichedPage() {
     [columns, visibleColumnKeys],
   );
 
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      if (statusFilter !== "all") {
+        const raw = row.company?.status;
+        if (typeof raw !== "string" || raw.trim().toLowerCase() !== statusFilter) {
+          return false;
+        }
+      }
+      if (
+        excludePredictedOriginBlacklist &&
+        isTruthyBlacklistFlag(row.isPredictedOriginBlacklisted)
+      ) {
+        return false;
+      }
+      if (
+        excludeContactLocationBlacklist &&
+        isTruthyBlacklistFlag(row.isContactLocationBlacklisted)
+      ) {
+        return false;
+      }
+      if (!rowMatchesSourceCountryFilter(row, sourceCountrySelection)) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    rows,
+    statusFilter,
+    excludePredictedOriginBlacklist,
+    excludeContactLocationBlacklist,
+    sourceCountrySelection,
+  ]);
+
   const sortedRows = useMemo(() => {
-    if (!sortState) return rows;
+    if (!sortState) return filteredRows;
     const active = columns.find((column) => column.key === sortState.key);
-    if (!active) return rows;
-    const sorted = [...rows].sort((leftRow, rightRow) => {
+    if (!active) return filteredRows;
+    const sorted = [...filteredRows].sort((leftRow, rightRow) => {
       const compared = compareValues(
         active.getValue(leftRow),
         active.getValue(rightRow),
@@ -217,7 +363,7 @@ export function EnrichedPage() {
       return sortState.direction === "asc" ? compared : -compared;
     });
     return sorted;
-  }, [columns, rows, sortState]);
+  }, [columns, filteredRows, sortState]);
 
   const grouped = useMemo(() => {
     if (!groupByCompany) return [];
@@ -270,6 +416,21 @@ export function EnrichedPage() {
           </label>
           <button
             type="button"
+            className="column-btn filter-trigger-btn"
+            onClick={() => setFilterModalOpen(true)}
+          >
+            Filters
+            <span className="filter-trigger-summary">
+              {filterSummary(
+                statusFilter,
+                excludePredictedOriginBlacklist,
+                excludeContactLocationBlacklist,
+                sourceCountrySelection,
+              )}
+            </span>
+          </button>
+          <button
+            type="button"
             className="column-btn"
             onClick={() => setColumnConfigOpen(true)}
           >
@@ -284,7 +445,19 @@ export function EnrichedPage() {
       {!loading && !error && !groupByCompany && (
         <section className="results">
           <div className="meta-bar meta-bar-row">
-            <span>{rows.length} contacts</span>
+            <span>
+              {sortedRows.length} contacts
+              <span className="meta-filter-hint">
+                {" "}
+                ·{" "}
+                {filterSummary(
+                  statusFilter,
+                  excludePredictedOriginBlacklist,
+                  excludeContactLocationBlacklist,
+                  sourceCountrySelection,
+                )}
+              </span>
+            </span>
           </div>
           <div className="table-wrap">
             <table>
@@ -322,6 +495,121 @@ export function EnrichedPage() {
             </table>
           </div>
         </section>
+      )}
+
+      {filterModalOpen && (
+        <div className="modal-backdrop" onClick={() => setFilterModalOpen(false)}>
+          <div className="modal filter-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Filters</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setFilterModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="filter-modal-body">
+              <fieldset className="filter-fieldset">
+                <legend>Company status</legend>
+                <div className="filter-radio-list">
+                  {(
+                    [
+                      ["all", "All"],
+                      ["approved", "Approved"],
+                      ["queued", "Queued"],
+                      ["rejected", "Rejected"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label key={value} className="filter-radio-row">
+                      <input
+                        type="radio"
+                        name="company-status-filter"
+                        value={value}
+                        checked={statusFilter === value}
+                        onChange={() => setStatusFilter(value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset className="filter-fieldset">
+                <legend>Company source country</legend>
+                <p className="filter-fieldset-hint">
+                  Choose one or more. Leave all unchecked to include every country.
+                </p>
+                <div className="filter-checkbox-stack">
+                  {SOURCE_COUNTRY_OPTIONS.map((country) => (
+                    <label key={country} className="filter-checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={sourceCountrySelection.has(country)}
+                        onChange={() => {
+                          setSourceCountrySelection((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(country)) next.delete(country);
+                            else next.add(country);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span>{country}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <label className="filter-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={excludePredictedOriginBlacklist}
+                  onChange={(e) => setExcludePredictedOriginBlacklist(e.target.checked)}
+                />
+                <span>
+                  Hide origin-blacklisted leads{" "}
+                  <span className="filter-checkbox-hint">
+                    (predicted origin blacklist is null or false)
+                  </span>
+                </span>
+              </label>
+              <label className="filter-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={excludeContactLocationBlacklist}
+                  onChange={(e) => setExcludeContactLocationBlacklist(e.target.checked)}
+                />
+                <span>
+                  Hide location-blacklisted leads{" "}
+                  <span className="filter-checkbox-hint">
+                    (contact in blacklisted country for location — null or false passes)
+                  </span>
+                </span>
+              </label>
+            </div>
+            <div className="modal-foot filter-modal-foot">
+              <button
+                type="button"
+                className="column-btn"
+                onClick={() => {
+                  setStatusFilter("approved");
+                  setExcludePredictedOriginBlacklist(true);
+                  setExcludeContactLocationBlacklist(true);
+                  setSourceCountrySelection(new Set(DEFAULT_SOURCE_COUNTRY_SELECTION));
+                }}
+              >
+                Reset to defaults
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setFilterModalOpen(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {columnConfigOpen && (

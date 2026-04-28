@@ -539,6 +539,103 @@ tr:last-child td {
   padding: 0.45rem 0.9rem;
 }
 
+.actions .filter-trigger-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+}
+
+.filter-trigger-summary {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: #64748b;
+  max-width: 36rem;
+  line-height: 1.25;
+}
+
+.meta-filter-hint {
+  color: #64748b;
+  font-weight: 400;
+}
+
+.filter-modal {
+  width: min(420px, 100%);
+}
+
+.filter-modal-body {
+  padding: 1rem 1.15rem 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.filter-fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.filter-fieldset legend {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.5rem;
+}
+
+.filter-fieldset-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.filter-checkbox-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.filter-radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.filter-radio-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  color: #334155;
+  cursor: pointer;
+}
+
+.filter-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.86rem;
+  color: #334155;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.filter-checkbox-hint {
+  display: block;
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 400;
+  margin-top: 0.15rem;
+}
+
+.filter-modal-foot {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .column-picker-list {
   display: flex;
   flex-wrap: wrap;
