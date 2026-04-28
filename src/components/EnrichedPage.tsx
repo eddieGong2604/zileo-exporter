@@ -337,26 +337,31 @@ function companyCountryFromRow(row: EnrichedContact): string {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
-function exportRowsToCsv(rows: EnrichedContact[]): void {
-  const headers = ["linkedin_url", "firstname", "companyname", "email", "country"];
-  const lines = [headers.join(",")];
+function valueForCsv(row: EnrichedContact, column: ColumnDef): string {
+  const raw = column.getValue(row);
+  if (raw === null || raw === undefined) return "";
+  if (typeof raw === "string") return raw.trim();
+  if (typeof raw === "number" || typeof raw === "boolean") return String(raw);
+  return JSON.stringify(raw);
+}
+
+function exportRowsToCsvWithColumns(rows: EnrichedContact[], selectedColumns: ColumnDef[]): void {
+  if (rows.length === 0 || selectedColumns.length === 0) return;
+  const headers = selectedColumns.map((c) => c.label);
+  const lines = [headers.map(csvEscape).join(",")];
   for (const row of rows) {
-    const values = [
-      (row.contactLinkedin ?? "").trim(),
-      firstNameFromRow(row),
-      companyNameFromRow(row),
-      (row.email ?? "").trim(),
-      companyCountryFromRow(row),
-    ].map(csvEscape);
+    const values = selectedColumns.map((column) => csvEscape(valueForCsv(row, column)));
     lines.push(values.join(","));
   }
-
   const csv = lines.join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `enriched_contacts_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`;
+  a.download = `enriched_contacts_selected_fields_${new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace(/:/g, "-")}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -414,6 +419,10 @@ export function EnrichedPage() {
   );
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
+  const [csvExportModalOpen, setCsvExportModalOpen] = useState(false);
+  const [csvExportSelectedColumnKeys, setCsvExportSelectedColumnKeys] = useState<Set<string>>(
+    new Set(),
+  );
   const [meetAlfredModalOpen, setMeetAlfredModalOpen] = useState(false);
   const [campaignsLoading, setCampaignsLoading] = useState(false);
   const [campaignsError, setCampaignsError] = useState<string | null>(null);
@@ -637,12 +646,22 @@ export function EnrichedPage() {
     });
   };
 
-  const exportSelectedRows = () => {
+  const openCsvExportModal = () => {
+    setCsvExportSelectedColumnKeys(new Set(visibleColumns.map((column) => column.key)));
+    setCsvExportModalOpen(true);
+  };
+
+  const exportSelectedRowsWithChosenColumns = () => {
     const selectedRows = sortedRows.filter((row) =>
       selectedRowKeys.has(selectionKeyForRow(row)),
     );
     if (!selectedRows.length) return;
-    exportRowsToCsv(selectedRows);
+    const selectedColumns = columns.filter((column) =>
+      csvExportSelectedColumnKeys.has(column.key),
+    );
+    if (selectedColumns.length === 0) return;
+    exportRowsToCsvWithColumns(selectedRows, selectedColumns);
+    setCsvExportModalOpen(false);
   };
 
   const openMeetAlfredModal = async () => {
@@ -811,7 +830,7 @@ export function EnrichedPage() {
                 type="button"
                 className="column-btn"
                 disabled={selectedCount === 0}
-                onClick={exportSelectedRows}
+                onClick={openCsvExportModal}
               >
                 Export CSV
               </button>
@@ -1006,6 +1025,83 @@ export function EnrichedPage() {
         </div>
       )}
 
+      {csvExportModalOpen && (
+        <div className="modal-backdrop" onClick={() => setCsvExportModalOpen(false)}>
+          <div className="modal column-config-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Export CSV Fields</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setCsvExportModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="dm-results">
+              <div className="column-picker-top">
+                <button
+                  type="button"
+                  className="column-btn"
+                  onClick={() =>
+                    setCsvExportSelectedColumnKeys(new Set(columns.map((column) => column.key)))
+                  }
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="column-btn"
+                  onClick={() =>
+                    setCsvExportSelectedColumnKeys(
+                      new Set(visibleColumns.map((column) => column.key)),
+                    )
+                  }
+                >
+                  Reset to visible columns
+                </button>
+              </div>
+              <div className="column-picker-list">
+                {columns.map((column) => (
+                  <label key={column.key} className="column-toggle-item">
+                    <input
+                      type="checkbox"
+                      checked={csvExportSelectedColumnKeys.has(column.key)}
+                      onChange={(e) => {
+                        setCsvExportSelectedColumnKeys((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(column.key);
+                          else next.delete(column.key);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span>{column.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setCsvExportModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={selectedCount === 0 || csvExportSelectedColumnKeys.size === 0}
+                onClick={exportSelectedRowsWithChosenColumns}
+              >
+                Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {meetAlfredModalOpen && (
         <div className="modal-backdrop" onClick={() => setMeetAlfredModalOpen(false)}>
           <div className="modal filter-modal" onClick={(e) => e.stopPropagation()}>
@@ -1174,7 +1270,7 @@ export function EnrichedPage() {
                   type="button"
                   className="column-btn"
                   disabled={selectedCount === 0}
-                  onClick={exportSelectedRows}
+                  onClick={openCsvExportModal}
                 >
                   Export CSV
                 </button>
