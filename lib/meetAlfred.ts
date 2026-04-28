@@ -7,6 +7,7 @@ const CAMPAIGN_WEBHOOK_KEYS = [
   "XU93kw7Dc2qD43hbQGql1eDyhpvO7CgL",
   "M4oFNExAkUrAEYPCsp6FSo1PXv90yKeD",
 ];
+const CSV_COMPANY_KEY_WEBHOOK = "XU93kw7Dc2qD43hbQGql1eDyhpvO7CgL";
 
 export type MeetAlfredCampaign = {
   id: number;
@@ -81,19 +82,30 @@ export async function addLeadsToMeetAlfredCampaign(input: {
   successIndices: number[];
 }> {
   const endpoint = `https://meetalfred.com/api/integrations/webhook/add_lead_to_campaign?webhook_key=${encodeURIComponent(input.webhookKey)}`;
+  const webhookKeyTail = input.webhookKey.slice(-6);
   const attempted = input.leads.length;
   if (!attempted) return { attempted: 0, sent: 0, failed: 0, successIndices: [] };
 
+  log.info("addLeadsToMeetAlfredCampaign start", {
+    attempted,
+    campaignId: input.campaignId,
+    webhookKeyTail,
+  });
+
   const settled = await Promise.allSettled(
-    input.leads.map(async (lead) => {
-      const payload = {
+    input.leads.map(async (lead, index) => {
+      const payload: Record<string, unknown> = {
         linkedin_profile_url: lead.linkedin_profile_url,
         campaign: input.campaignId,
         csv_firstname: lead.csv_firstname,
-        csv_companyname: lead.csv_companyname,
         csv_email: lead.csv_email,
         csv_country: lead.csv_country,
       };
+      if (input.webhookKey === CSV_COMPANY_KEY_WEBHOOK) {
+        payload.csv_company = lead.csv_companyname;
+      } else {
+        payload.csv_companyname = lead.csv_companyname;
+      }
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", accept: "application/json" },
@@ -101,8 +113,24 @@ export async function addLeadsToMeetAlfredCampaign(input: {
       });
       if (!res.ok) {
         const body = await res.text();
+        log.warn("meetAlfred lead send failed", {
+          index,
+          campaignId: input.campaignId,
+          webhookKeyTail,
+          linkedin: lead.linkedin_profile_url,
+          company: lead.csv_companyname,
+          status: res.status,
+          responseSnippet: body.slice(0, 300),
+        });
         throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
       }
+      log.info("meetAlfred lead send ok", {
+        index,
+        campaignId: input.campaignId,
+        webhookKeyTail,
+        linkedin: lead.linkedin_profile_url,
+        company: lead.csv_companyname,
+      });
     }),
   );
 
@@ -110,10 +138,32 @@ export async function addLeadsToMeetAlfredCampaign(input: {
   const successIndices: number[] = [];
   for (let i = 0; i < settled.length; i += 1) {
     const r = settled[i];
-    if (r.status === "rejected") failed += 1;
-    else successIndices.push(i);
+    if (r.status === "rejected") {
+      failed += 1;
+      log.warn("meetAlfred lead audit", {
+        index: i,
+        campaignId: input.campaignId,
+        webhookKeyTail,
+        outcome: "failed",
+        error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+      });
+    } else {
+      successIndices.push(i);
+      log.info("meetAlfred lead audit", {
+        index: i,
+        campaignId: input.campaignId,
+        webhookKeyTail,
+        outcome: "sent",
+      });
+    }
   }
   const sent = attempted - failed;
-  log.info("addLeadsToMeetAlfredCampaign done", { attempted, sent, failed });
+  log.info("addLeadsToMeetAlfredCampaign done", {
+    attempted,
+    sent,
+    failed,
+    campaignId: input.campaignId,
+    webhookKeyTail,
+  });
   return { attempted, sent, failed, successIndices };
 }

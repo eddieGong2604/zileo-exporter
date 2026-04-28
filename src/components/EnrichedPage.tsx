@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import { bulkRevealEmails } from "../api/apolloBulkReveal";
+import { updateContactFirstName as updateContactFirstNameApi } from "../api/contactFirstName";
 import { fetchEnrichedContacts } from "../api/enrichedContacts";
 import { bulkSendMeetAlfred, fetchMeetAlfredCampaigns } from "../api/meetAlfred";
 import type { EnrichedContact } from "../types/enriched";
@@ -13,6 +14,7 @@ type ColumnDef = {
 type SortDirection = "asc" | "desc";
 type SortState = { key: string; direction: SortDirection } | null;
 type CompanyStatusFilter = "all" | "approved" | "queued" | "rejected";
+type MeetAlfredAddedFilter = "all" | "added" | "not_added";
 type MeetAlfredCampaign = {
   id: number;
   label: string;
@@ -25,6 +27,7 @@ const LS_KEYS = {
   statusFilter: "enriched.statusFilter",
   excludeOriginBlacklist: "enriched.excludeOriginBlacklist",
   excludeLocationBlacklist: "enriched.excludeLocationBlacklist",
+  meetAlfredAddedFilter: "enriched.meetAlfredAddedFilter",
   sourceCountries: "enriched.sourceCountries",
   visibleColumns: "enriched.visibleColumns",
 } as const;
@@ -51,6 +54,7 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
   "contact.predicted_origin_of_name",
   "contact.is_predicted_origin_blacklisted",
   "contact.is_contact_location_blacklisted",
+  "contact.added_to_meetalfred_campaign",
 ]);
 
 const CONTACT_COLUMN_DEFS: ColumnDef[] = [
@@ -93,6 +97,11 @@ const CONTACT_COLUMN_DEFS: ColumnDef[] = [
     key: "contact.is_contact_location_blacklisted",
     label: "Location Blacklisted",
     getValue: (row) => row.isContactLocationBlacklisted,
+  },
+  {
+    key: "contact.added_to_meetalfred_campaign",
+    label: "Added To Meet Alfred Campaign",
+    getValue: (row) => row.addedToMeetAlfredCampaign,
   },
   { key: "contact.source", label: "Contact Source", getValue: (row) => row.source },
   { key: "contact.email", label: "Contact Email", getValue: (row) => row.email },
@@ -269,6 +278,7 @@ function rowMatchesSourceCountryFilter(
 
 function filterSummary(
   status: CompanyStatusFilter,
+  meetAlfredAddedFilter: MeetAlfredAddedFilter,
   excludeOriginBlacklist: boolean,
   excludeLocationBlacklist: boolean,
   sourceCountries: ReadonlySet<string>,
@@ -276,6 +286,13 @@ function filterSummary(
   const statusPart =
     status === "all" ? "All statuses" : `${status[0]!.toUpperCase()}${status.slice(1)}`;
   const parts = [statusPart];
+  parts.push(
+    meetAlfredAddedFilter === "all"
+      ? "Meet Alfred: all"
+      : meetAlfredAddedFilter === "added"
+        ? "Meet Alfred: added only"
+        : "Meet Alfred: not added only",
+  );
   parts.push(
     excludeOriginBlacklist ? "Origin not blacklisted" : "Any origin blacklist",
   );
@@ -389,6 +406,13 @@ export function EnrichedPage() {
     }
     return "approved";
   });
+  const [meetAlfredAddedFilter, setMeetAlfredAddedFilter] = useState<MeetAlfredAddedFilter>(
+    () => {
+      const raw = safeReadLocalStorage(LS_KEYS.meetAlfredAddedFilter);
+      if (raw === "all" || raw === "added" || raw === "not_added") return raw;
+      return "all";
+    },
+  );
   const [excludePredictedOriginBlacklist, setExcludePredictedOriginBlacklist] = useState(() => {
     const raw = safeReadLocalStorage(LS_KEYS.excludeOriginBlacklist);
     if (raw === "false") return false;
@@ -432,6 +456,8 @@ export function EnrichedPage() {
   const [sendResultMessage, setSendResultMessage] = useState<string | null>(null);
   const [revealingEmails, setRevealingEmails] = useState(false);
   const [revealResultMessage, setRevealResultMessage] = useState<string | null>(null);
+  const [firstNameDraftByKey, setFirstNameDraftByKey] = useState<Record<string, string>>({});
+  const [firstNameSavingKeys, setFirstNameSavingKeys] = useState<Set<string>>(new Set());
 
   const loadRows = async () => {
     setLoading(true);
@@ -498,6 +524,10 @@ export function EnrichedPage() {
   }, [statusFilter]);
 
   useEffect(() => {
+    safeWriteLocalStorage(LS_KEYS.meetAlfredAddedFilter, meetAlfredAddedFilter);
+  }, [meetAlfredAddedFilter]);
+
+  useEffect(() => {
     safeWriteLocalStorage(
       LS_KEYS.excludeOriginBlacklist,
       String(excludePredictedOriginBlacklist),
@@ -539,6 +569,12 @@ export function EnrichedPage() {
           return false;
         }
       }
+      if (meetAlfredAddedFilter === "added" && row.addedToMeetAlfredCampaign !== true) {
+        return false;
+      }
+      if (meetAlfredAddedFilter === "not_added" && row.addedToMeetAlfredCampaign === true) {
+        return false;
+      }
       if (
         excludePredictedOriginBlacklist &&
         isTruthyBlacklistFlag(row.isPredictedOriginBlacklisted)
@@ -559,6 +595,7 @@ export function EnrichedPage() {
   }, [
     rows,
     statusFilter,
+    meetAlfredAddedFilter,
     excludePredictedOriginBlacklist,
     excludeContactLocationBlacklist,
     sourceCountrySelection,
@@ -752,6 +789,74 @@ export function EnrichedPage() {
     }
   };
 
+  const saveFirstNameForRow = async (row: EnrichedContact) => {
+    const id = Number(row.id);
+    if (!Number.isFinite(id) || id <= 0) return;
+    const rowKey = selectionKeyForRow(row);
+    const current = (row.firstName ?? "").trim();
+    const draft = (firstNameDraftByKey[rowKey] ?? current).trim();
+    if (draft === current) return;
+    setFirstNameSavingKeys((prev) => {
+      const next = new Set(prev);
+      next.add(rowKey);
+      return next;
+    });
+    setError(null);
+    try {
+      await updateContactFirstNameApi({ id, firstName: draft });
+      setRows((prev) =>
+        prev.map((item) => (item.id === row.id ? { ...item, firstName: draft } : item)),
+      );
+      setFirstNameDraftByKey((prev) => {
+        const next = { ...prev };
+        delete next[rowKey];
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update first name");
+    } finally {
+      setFirstNameSavingKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(rowKey);
+        return next;
+      });
+    }
+  };
+
+  const renderCell = (row: EnrichedContact, column: ColumnDef) => {
+    if (column.key !== "contact.first_name") {
+      return displayValue(column.getValue(row), column.key);
+    }
+    const rowKey = selectionKeyForRow(row);
+    const isSaving = firstNameSavingKeys.has(rowKey);
+    const sourceValue = (row.firstName ?? "").trim();
+    const draft = firstNameDraftByKey[rowKey] ?? sourceValue;
+    const dirty = draft.trim() !== sourceValue;
+    const canSave = Number.isFinite(Number(row.id)) && Number(row.id) > 0 && dirty && !isSaving;
+    return (
+      <div className="inline-edit-cell">
+        <input
+          className="inline-edit-input"
+          type="text"
+          value={draft}
+          onChange={(e) => {
+            const value = e.target.value;
+            setFirstNameDraftByKey((prev) => ({ ...prev, [rowKey]: value }));
+          }}
+          placeholder="First name"
+        />
+        <button
+          type="button"
+          className="inline-edit-save-btn"
+          disabled={!canSave}
+          onClick={() => void saveFirstNameForRow(row)}
+        >
+          {isSaving ? "..." : "Save"}
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="app app--wide app--dense">
       <header className="header">
@@ -784,6 +889,7 @@ export function EnrichedPage() {
             <span className="filter-trigger-summary">
               {filterSummary(
                 statusFilter,
+                meetAlfredAddedFilter,
                 excludePredictedOriginBlacklist,
                 excludeContactLocationBlacklist,
                 sourceCountrySelection,
@@ -813,6 +919,7 @@ export function EnrichedPage() {
                 ·{" "}
                 {filterSummary(
                   statusFilter,
+                  meetAlfredAddedFilter,
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
                   sourceCountrySelection,
@@ -899,7 +1006,7 @@ export function EnrichedPage() {
                     </td>
                     {visibleColumns.map((column) => (
                       <td key={`${buildRowKey(row, idx)}-${column.key}`}>
-                        {displayValue(column.getValue(row), column.key)}
+                        {renderCell(row, column)}
                       </td>
                     ))}
                   </tr>
@@ -942,6 +1049,29 @@ export function EnrichedPage() {
                         value={value}
                         checked={statusFilter === value}
                         onChange={() => setStatusFilter(value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset className="filter-fieldset">
+                <legend>Added to Meet Alfred campaign</legend>
+                <div className="filter-radio-list">
+                  {(
+                    [
+                      ["all", "All"],
+                      ["added", "Added only"],
+                      ["not_added", "Not added only"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label key={value} className="filter-radio-row">
+                      <input
+                        type="radio"
+                        name="meetalfred-added-filter"
+                        value={value}
+                        checked={meetAlfredAddedFilter === value}
+                        onChange={() => setMeetAlfredAddedFilter(value)}
                       />
                       <span>{label}</span>
                     </label>
@@ -1006,6 +1136,7 @@ export function EnrichedPage() {
                 className="column-btn"
                 onClick={() => {
                   setStatusFilter("approved");
+                  setMeetAlfredAddedFilter("all");
                   setExcludePredictedOriginBlacklist(true);
                   setExcludeContactLocationBlacklist(true);
                   setSourceCountrySelection(new Set(DEFAULT_SOURCE_COUNTRY_SELECTION));
@@ -1253,6 +1384,7 @@ export function EnrichedPage() {
                   ·{" "}
                   {filterSummary(
                     statusFilter,
+                    meetAlfredAddedFilter,
                     excludePredictedOriginBlacklist,
                     excludeContactLocationBlacklist,
                     sourceCountrySelection,
@@ -1364,7 +1496,7 @@ export function EnrichedPage() {
                         </td>
                         {visibleColumns.map((column) => (
                           <td key={`${buildRowKey(row, idx)}-${column.key}`}>
-                            {displayValue(column.getValue(row), column.key)}
+                            {renderCell(row, column)}
                           </td>
                         ))}
                       </tr>

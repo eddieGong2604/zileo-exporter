@@ -18,6 +18,7 @@ export type EnrichedContact = {
   countryId: string | number | null;
   isPredictedOriginBlacklisted: boolean | null;
   isContactLocationBlacklisted: boolean | null;
+  addedToMeetAlfredCampaign: boolean | null;
   createdAt: string;
   updatedAt: string;
   company: Record<string, unknown> | null;
@@ -65,6 +66,7 @@ export async function listEnrichedContacts(
           ct.country_id AS "countryId",
           ct.is_predicted_origin_blacklisted AS "isPredictedOriginBlacklisted",
           ct.is_contact_location_blacklisted AS "isContactLocationBlacklisted",
+          ct.added_to_meetalfred_campaign AS "addedToMeetAlfredCampaign",
           ct.created_at AS "createdAt",
           ct.updated_at AS "updatedAt",
           row_to_json(cp) AS company
@@ -132,6 +134,31 @@ export async function markContactsAddedToMeetAlfred(
     return res.rowCount ?? 0;
   } catch (error) {
     log.error("markContactsAddedToMeetAlfred failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updateContactFirstName(
+  input: { id: number; firstName: string },
+  connectionStringOverride?: string,
+): Promise<boolean> {
+  if (!Number.isFinite(input.id) || input.id <= 0) return false;
+  const client = await getPool(connectionStringOverride).connect();
+  try {
+    const res = await client.query(
+      `UPDATE contacts
+       SET first_name = $2, updated_at = NOW()
+       WHERE id = $1`,
+      [input.id, input.firstName],
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch (error) {
+    log.error("updateContactFirstName failed", {
+      id: input.id,
       message: error instanceof Error ? error.message : String(error),
     });
     throw error;

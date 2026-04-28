@@ -13,6 +13,7 @@ export type EnrichedContact = {
   countryId: string | number | null;
   isPredictedOriginBlacklisted: boolean | null;
   isContactLocationBlacklisted: boolean | null;
+  addedToMeetAlfredCampaign: boolean | null;
   createdAt: string;
   updatedAt: string;
   company: Record<string, unknown> | null;

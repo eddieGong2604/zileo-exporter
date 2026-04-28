@@ -325,6 +325,12 @@ tr:last-child td {
   flex-wrap: wrap;
 }
 
+.results > .meta-bar-row {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
 .meta-actions {
   display: flex;
   gap: 0.5rem;
@@ -669,6 +675,41 @@ tr:last-child td {
 
 .company-detail-row strong {
   color: #0f172a;
+}
+
+.inline-edit-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 190px;
+}
+
+.inline-edit-input {
+  width: 120px;
+  max-width: 100%;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.inline-edit-save-btn {
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 0.18rem 0.45rem;
+  border: 1px solid #1d4ed8;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d4ed8;
+  cursor: pointer;
+}
+
+.inline-edit-save-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .modal-backdrop {
