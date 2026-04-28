@@ -19,6 +19,15 @@ type MeetAlfredCampaign = {
   webhookKey: string;
 };
 
+const LS_KEYS = {
+  groupByCompany: "enriched.groupByCompany",
+  statusFilter: "enriched.statusFilter",
+  excludeOriginBlacklist: "enriched.excludeOriginBlacklist",
+  excludeLocationBlacklist: "enriched.excludeLocationBlacklist",
+  sourceCountries: "enriched.sourceCountries",
+  visibleColumns: "enriched.visibleColumns",
+} as const;
+
 const SOURCE_COUNTRY_OPTIONS = [
   "Australia",
   "United States",
@@ -232,7 +241,14 @@ function sourceCountryMatchesOption(dbValue: string, option: string): boolean {
     );
   }
   if (option === "United Kingdom") {
-    return n === "uk" || n === "gb" || n === "great britain";
+    return (
+      n === "uk" ||
+      n === "gb" ||
+      n === "great britain" ||
+      n === "united kingdon" ||
+      n === "united kinadom" ||
+      n === "united kindgom"
+    );
   }
   return false;
 }
@@ -273,6 +289,22 @@ function filterSummary(
     );
   }
   return parts.join(" · ");
+}
+
+function safeReadLocalStorage(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeWriteLocalStorage(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures (private mode/quota/etc).
+  }
 }
 
 function csvEscape(value: string): string {
@@ -334,16 +366,50 @@ export function EnrichedPage() {
   const [rows, setRows] = useState<EnrichedContact[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [groupByCompany, setGroupByCompany] = useState(true);
+  const [groupByCompany, setGroupByCompany] = useState<boolean>(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.groupByCompany);
+    if (raw === "false") return false;
+    if (raw === "true") return true;
+    return true;
+  });
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<Set<string>>(new Set());
   const [sortState, setSortState] = useState<SortState>(null);
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const [initializedVisibleColumns, setInitializedVisibleColumns] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<CompanyStatusFilter>("approved");
-  const [excludePredictedOriginBlacklist, setExcludePredictedOriginBlacklist] = useState(true);
-  const [excludeContactLocationBlacklist, setExcludeContactLocationBlacklist] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<CompanyStatusFilter>(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.statusFilter);
+    if (raw === "all" || raw === "approved" || raw === "queued" || raw === "rejected") {
+      return raw;
+    }
+    return "approved";
+  });
+  const [excludePredictedOriginBlacklist, setExcludePredictedOriginBlacklist] = useState(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.excludeOriginBlacklist);
+    if (raw === "false") return false;
+    if (raw === "true") return true;
+    return true;
+  });
+  const [excludeContactLocationBlacklist, setExcludeContactLocationBlacklist] = useState(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.excludeLocationBlacklist);
+    if (raw === "false") return false;
+    if (raw === "true") return true;
+    return true;
+  });
   const [sourceCountrySelection, setSourceCountrySelection] = useState<Set<string>>(
-    () => new Set(DEFAULT_SOURCE_COUNTRY_SELECTION),
+    () => {
+      const raw = safeReadLocalStorage(LS_KEYS.sourceCountries);
+      if (!raw) return new Set(DEFAULT_SOURCE_COUNTRY_SELECTION);
+      try {
+        const arr = JSON.parse(raw) as string[];
+        if (!Array.isArray(arr)) return new Set(DEFAULT_SOURCE_COUNTRY_SELECTION);
+        const normalized = arr.filter((v) =>
+          SOURCE_COUNTRY_OPTIONS.includes(v as (typeof SOURCE_COUNTRY_OPTIONS)[number]),
+        );
+        return new Set(normalized);
+      } catch {
+        return new Set(DEFAULT_SOURCE_COUNTRY_SELECTION);
+      }
+    },
   );
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
@@ -378,9 +444,24 @@ export function EnrichedPage() {
     if (!initializedVisibleColumns) {
       const hasCompanyColumns = columns.some((column) => column.key.startsWith("company."));
       if (!hasCompanyColumns && rows.length === 0) return;
-      const defaults = columns
-        .map((column) => column.key)
-        .filter((key) => DEFAULT_VISIBLE_COLUMN_KEYS.has(key));
+      const savedVisibleRaw = safeReadLocalStorage(LS_KEYS.visibleColumns);
+      let defaults: string[] = [];
+      if (savedVisibleRaw) {
+        try {
+          const saved = JSON.parse(savedVisibleRaw) as string[];
+          if (Array.isArray(saved)) {
+            const allowed = new Set(columns.map((c) => c.key));
+            defaults = saved.filter((k) => allowed.has(k));
+          }
+        } catch {
+          defaults = [];
+        }
+      }
+      if (defaults.length === 0) {
+        defaults = columns
+          .map((column) => column.key)
+          .filter((key) => DEFAULT_VISIBLE_COLUMN_KEYS.has(key));
+      }
       setVisibleColumnKeys(
         new Set(defaults.length > 0 ? defaults : columns.map((column) => column.key)),
       );
@@ -393,6 +474,43 @@ export function EnrichedPage() {
       return new Set(Array.from(prev).filter((key) => columnKeys.has(key)));
     });
   }, [columns, initializedVisibleColumns, rows.length]);
+
+  useEffect(() => {
+    safeWriteLocalStorage(LS_KEYS.groupByCompany, String(groupByCompany));
+  }, [groupByCompany]);
+
+  useEffect(() => {
+    safeWriteLocalStorage(LS_KEYS.statusFilter, statusFilter);
+  }, [statusFilter]);
+
+  useEffect(() => {
+    safeWriteLocalStorage(
+      LS_KEYS.excludeOriginBlacklist,
+      String(excludePredictedOriginBlacklist),
+    );
+  }, [excludePredictedOriginBlacklist]);
+
+  useEffect(() => {
+    safeWriteLocalStorage(
+      LS_KEYS.excludeLocationBlacklist,
+      String(excludeContactLocationBlacklist),
+    );
+  }, [excludeContactLocationBlacklist]);
+
+  useEffect(() => {
+    safeWriteLocalStorage(
+      LS_KEYS.sourceCountries,
+      JSON.stringify(Array.from(sourceCountrySelection)),
+    );
+  }, [sourceCountrySelection]);
+
+  useEffect(() => {
+    if (!initializedVisibleColumns) return;
+    safeWriteLocalStorage(
+      LS_KEYS.visibleColumns,
+      JSON.stringify(Array.from(visibleColumnKeys)),
+    );
+  }, [visibleColumnKeys, initializedVisibleColumns]);
 
   const visibleColumns = useMemo(
     () => sortColumnsByVisibility(columns, visibleColumnKeys),
