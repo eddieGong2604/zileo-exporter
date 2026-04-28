@@ -5,11 +5,16 @@ import type { Plugin } from "vite";
 import { createLogger } from "./lib/logger.js";
 import { revealCompanyWithOpenAI } from "./lib/revealCompanyOpenAI";
 import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
-import { listEnrichedContacts } from "./lib/enrichedContactsRepo.js";
+import {
+  listEnrichedContacts,
+  markContactsAddedToMeetAlfred,
+  updateContactEmails,
+} from "./lib/enrichedContactsRepo.js";
 import {
   addLeadsToMeetAlfredCampaign,
   listMeetAlfredCampaigns,
 } from "./lib/meetAlfred.js";
+import { bulkRevealEmailsWithApollo } from "./lib/apolloBulkMatch.js";
 
 const devRevealLog = createLogger("vite/reveal-dev-api");
 
@@ -118,6 +123,85 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
       server.middlewares.use(
         (req: IncomingMessage, res: ServerResponse, next: () => void) => {
           const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "POST" || pathname !== "/api/apollo-bulk-reveal-emails") {
+            next();
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          req.on("end", () => {
+            void (async () => {
+              try {
+                const apiKey = env.APOLLO_API_KEY;
+                if (!apiKey) {
+                  res.statusCode = 500;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(JSON.stringify({ error: "Missing APOLLO_API_KEY on server" }));
+                  return;
+                }
+                const raw = Buffer.concat(chunks).toString("utf8");
+                const body = JSON.parse(raw) as {
+                  contacts?: Array<{
+                    id?: number;
+                    linkedinUrl?: string;
+                    firstName?: string;
+                    contactName?: string;
+                    companyName?: string;
+                  }>;
+                };
+                const contacts = Array.isArray(body.contacts) ? body.contacts : [];
+                const mapped = contacts
+                  .map((c) => {
+                    const fullName = (c.contactName ?? "").trim();
+                    const [firstFromName = "", ...rest] = fullName
+                      .split(/\s+/)
+                      .filter(Boolean);
+                    return {
+                      contactId: Number(c.id),
+                      linkedinUrl: (c.linkedinUrl ?? "").trim(),
+                      firstName: (c.firstName ?? "").trim() || firstFromName || undefined,
+                      lastName: rest.length > 0 ? rest.join(" ") : undefined,
+                      name: fullName || undefined,
+                      organizationName: (c.companyName ?? "").trim() || undefined,
+                    };
+                  })
+                  .filter(
+                    (c) =>
+                      Number.isFinite(c.contactId) && c.contactId > 0 && c.linkedinUrl.length > 0,
+                  );
+                const found = await bulkRevealEmailsWithApollo({
+                  apiKey,
+                  people: mapped,
+                });
+                const updated = await updateContactEmails(
+                  found.map((f) => ({ id: f.contactId, email: f.email })),
+                  env.POSTGRES_URL || env.DATABASE_URL,
+                );
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(
+                  JSON.stringify({
+                    requested: mapped.length,
+                    matchedWithEmail: found.length,
+                    updated,
+                  }),
+                );
+              } catch (e) {
+                const msg =
+                  e instanceof Error ? e.message : "Failed to reveal emails with Apollo";
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ error: msg }));
+              }
+            })();
+          });
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
           if (req.method !== "GET" || pathname !== "/api/enriched-contacts") {
             next();
             return;
@@ -185,6 +269,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                   webhookKey?: string;
                   campaignId?: number;
                   leads?: Array<{
+                    contactId?: number;
                     linkedin_profile_url?: string;
                     csv_firstname?: string;
                     csv_companyname?: string;
@@ -222,9 +307,23 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     csv_country: (lead.csv_country ?? "").trim(),
                   })),
                 });
+                const successfulContactIds = result.successIndices
+                  .map((index) => Number(leads[index]?.contactId))
+                  .filter((id) => Number.isFinite(id) && id > 0) as number[];
+                const marked = await markContactsAddedToMeetAlfred(
+                  successfulContactIds,
+                  env.POSTGRES_URL || env.DATABASE_URL,
+                );
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json; charset=utf-8");
-                res.end(JSON.stringify(result));
+                res.end(
+                  JSON.stringify({
+                    attempted: result.attempted,
+                    sent: result.sent,
+                    failed: result.failed,
+                    marked,
+                  }),
+                );
               } catch (e) {
                 const msg =
                   e instanceof Error ? e.message : "Failed to send Meet Alfred leads";

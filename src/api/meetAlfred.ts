@@ -19,13 +19,14 @@ export async function bulkSendMeetAlfred(input: {
   webhookKey: string;
   campaignId: number;
   leads: Array<{
+    contactId: number;
     linkedin_profile_url: string;
     csv_firstname: string;
     csv_companyname: string;
     csv_email: string;
     csv_country: string;
   }>;
-}): Promise<{ attempted: number; sent: number; failed: number }> {
+}): Promise<{ attempted: number; sent: number; failed: number; marked: number }> {
   const res = await fetch("/api/meet-alfred-bulk-send", {
     method: "POST",
     headers: { "Content-Type": "application/json", accept: "application/json" },
@@ -35,5 +36,10 @@ export async function bulkSendMeetAlfred(input: {
   if (!res.ok) {
     throw new Error(text || `HTTP ${res.status}`);
   }
-  return JSON.parse(text) as { attempted: number; sent: number; failed: number };
+  return JSON.parse(text) as {
+    attempted: number;
+    sent: number;
+    failed: number;
+    marked: number;
+  };
 }

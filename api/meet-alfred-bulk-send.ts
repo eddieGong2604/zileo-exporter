@@ -2,6 +2,7 @@ export const config = { runtime: "nodejs" };
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { addLeadsToMeetAlfredCampaign } from "../lib/meetAlfred.js";
+import { markContactsAddedToMeetAlfred } from "../lib/enrichedContactsRepo.js";
 
 async function readRawBody(req: IncomingMessage): Promise<string> {
   return await new Promise((resolve, reject) => {
@@ -24,6 +25,7 @@ type ReqBody = {
   webhookKey?: string;
   campaignId?: number;
   leads?: Array<{
+    contactId?: number;
     linkedin_profile_url?: string;
     csv_firstname?: string;
     csv_companyname?: string;
@@ -57,6 +59,7 @@ export default async function handler(
     }
 
     const preparedLeads = leads.map((lead) => ({
+      contactId: Number(lead.contactId),
       linkedin_profile_url: (lead.linkedin_profile_url ?? "").trim(),
       csv_firstname: (lead.csv_firstname ?? "").trim(),
       csv_companyname: (lead.csv_companyname ?? "").trim(),
@@ -67,9 +70,24 @@ export default async function handler(
     const result = await addLeadsToMeetAlfredCampaign({
       webhookKey,
       campaignId,
-      leads: preparedLeads,
+      leads: preparedLeads.map((lead) => ({
+        linkedin_profile_url: lead.linkedin_profile_url,
+        csv_firstname: lead.csv_firstname,
+        csv_companyname: lead.csv_companyname,
+        csv_email: lead.csv_email,
+        csv_country: lead.csv_country,
+      })),
     });
-    sendJson(res, 200, result);
+    const successfulContactIds = result.successIndices
+      .map((index) => preparedLeads[index]?.contactId)
+      .filter((id): id is number => Number.isFinite(id) && id > 0);
+    const marked = await markContactsAddedToMeetAlfred(successfulContactIds);
+    sendJson(res, 200, {
+      attempted: result.attempted,
+      sent: result.sent,
+      failed: result.failed,
+      marked,
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to send leads to Meet Alfred";

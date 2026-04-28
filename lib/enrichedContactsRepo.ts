@@ -83,3 +83,59 @@ export async function listEnrichedContacts(
     client.release();
   }
 }
+
+export async function updateContactEmails(
+  updates: Array<{ id: number; email: string }>,
+  connectionStringOverride?: string,
+): Promise<number> {
+  if (updates.length === 0) return 0;
+  const client = await getPool(connectionStringOverride).connect();
+  try {
+    await client.query("BEGIN");
+    let updated = 0;
+    for (const item of updates) {
+      const res = await client.query(
+        `UPDATE contacts
+         SET email = $2, updated_at = NOW()
+         WHERE id = $1`,
+        [item.id, item.email],
+      );
+      updated += res.rowCount ?? 0;
+    }
+    await client.query("COMMIT");
+    return updated;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    log.error("updateContactEmails failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function markContactsAddedToMeetAlfred(
+  contactIds: number[],
+  connectionStringOverride?: string,
+): Promise<number> {
+  const ids = Array.from(new Set(contactIds.filter((id) => Number.isFinite(id) && id > 0)));
+  if (ids.length === 0) return 0;
+  const client = await getPool(connectionStringOverride).connect();
+  try {
+    const res = await client.query(
+      `UPDATE contacts
+       SET added_to_meetalfred_campaign = TRUE, updated_at = NOW()
+       WHERE id = ANY($1::int[])`,
+      [ids],
+    );
+    return res.rowCount ?? 0;
+  } catch (error) {
+    log.error("markContactsAddedToMeetAlfred failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}

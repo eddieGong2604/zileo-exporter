@@ -74,10 +74,15 @@ export async function addLeadsToMeetAlfredCampaign(input: {
   webhookKey: string;
   campaignId: number;
   leads: MeetAlfredLeadInput[];
-}): Promise<{ attempted: number; sent: number; failed: number }> {
+}): Promise<{
+  attempted: number;
+  sent: number;
+  failed: number;
+  successIndices: number[];
+}> {
   const endpoint = `https://meetalfred.com/api/integrations/webhook/add_lead_to_campaign?webhook_key=${encodeURIComponent(input.webhookKey)}`;
   const attempted = input.leads.length;
-  if (!attempted) return { attempted: 0, sent: 0, failed: 0 };
+  if (!attempted) return { attempted: 0, sent: 0, failed: 0, successIndices: [] };
 
   const settled = await Promise.allSettled(
     input.leads.map(async (lead) => {
@@ -102,10 +107,13 @@ export async function addLeadsToMeetAlfredCampaign(input: {
   );
 
   let failed = 0;
-  for (const r of settled) {
+  const successIndices: number[] = [];
+  for (let i = 0; i < settled.length; i += 1) {
+    const r = settled[i];
     if (r.status === "rejected") failed += 1;
+    else successIndices.push(i);
   }
   const sent = attempted - failed;
   log.info("addLeadsToMeetAlfredCampaign done", { attempted, sent, failed });
-  return { attempted, sent, failed };
+  return { attempted, sent, failed, successIndices };
 }

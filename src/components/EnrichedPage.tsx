@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
+import { bulkRevealEmails } from "../api/apolloBulkReveal";
 import { fetchEnrichedContacts } from "../api/enrichedContacts";
 import { bulkSendMeetAlfred, fetchMeetAlfredCampaigns } from "../api/meetAlfred";
 import type { EnrichedContact } from "../types/enriched";
@@ -420,20 +421,24 @@ export function EnrichedPage() {
   const [selectedCampaignComposite, setSelectedCampaignComposite] = useState("");
   const [sendingToMeetAlfred, setSendingToMeetAlfred] = useState(false);
   const [sendResultMessage, setSendResultMessage] = useState<string | null>(null);
+  const [revealingEmails, setRevealingEmails] = useState(false);
+  const [revealResultMessage, setRevealResultMessage] = useState<string | null>(null);
+
+  const loadRows = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchEnrichedContacts();
+      setRows(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    void (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await fetchEnrichedContacts();
-        setRows(data);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load data");
-      } finally {
-        setLoading(false);
-      }
-    })();
+    void loadRows();
   }, []);
 
   const columns = useMemo(() => allColumns(rows), [rows]);
@@ -678,6 +683,7 @@ export function EnrichedPage() {
         webhookKey,
         campaignId,
         leads: selectedRows.map((row) => ({
+          contactId: Number(row.id ?? 0),
           linkedin_profile_url: (row.contactLinkedin ?? "").trim(),
           csv_firstname: firstNameFromRow(row),
           csv_companyname: companyNameFromRow(row),
@@ -686,12 +692,44 @@ export function EnrichedPage() {
         })),
       });
       setSendResultMessage(
-        `Sent ${result.sent}/${result.attempted} leads (failed: ${result.failed}).`,
+        `Sent ${result.sent}/${result.attempted} leads (failed: ${result.failed}, marked: ${result.marked}).`,
       );
+      await loadRows();
     } catch (e) {
       setCampaignsError(e instanceof Error ? e.message : "Failed to send leads");
     } finally {
       setSendingToMeetAlfred(false);
+    }
+  };
+
+  const revealEmailsForSelectedRows = async () => {
+    const selectedRows = sortedRows.filter((row) =>
+      selectedRowKeys.has(selectionKeyForRow(row)),
+    );
+    if (!selectedRows.length) return;
+    setRevealingEmails(true);
+    setRevealResultMessage(null);
+    setError(null);
+    try {
+      const result = await bulkRevealEmails({
+        contacts: selectedRows
+          .map((row) => ({
+            id: Number(row.id ?? 0),
+            linkedinUrl: (row.contactLinkedin ?? "").trim(),
+            firstName: (row.firstName ?? "").trim(),
+            contactName: (row.contactName ?? "").trim(),
+            companyName: companyNameFromRow(row),
+          }))
+          .filter((c) => c.id > 0 && c.linkedinUrl.length > 0),
+      });
+      setRevealResultMessage(
+        `Apollo matched ${result.matchedWithEmail}/${result.requested}. Updated ${result.updated} contacts.`,
+      );
+      await loadRows();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to reveal emails");
+    } finally {
+      setRevealingEmails(false);
     }
   };
 
@@ -776,6 +814,14 @@ export function EnrichedPage() {
                 onClick={exportSelectedRows}
               >
                 Export CSV
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0 || revealingEmails}
+                onClick={() => void revealEmailsForSelectedRows()}
+              >
+                {revealingEmails ? "Revealing..." : "Bulk Reveal Email"}
               </button>
               <button
                 type="button"
@@ -1135,6 +1181,14 @@ export function EnrichedPage() {
                 <button
                   type="button"
                   className="column-btn"
+                  disabled={selectedCount === 0 || revealingEmails}
+                  onClick={() => void revealEmailsForSelectedRows()}
+                >
+                  {revealingEmails ? "Revealing..." : "Bulk Reveal Email"}
+                </button>
+                <button
+                  type="button"
+                  className="column-btn"
                   disabled={selectedCount === 0}
                   onClick={() => void openMeetAlfredModal()}
                 >
@@ -1142,6 +1196,7 @@ export function EnrichedPage() {
                 </button>
               </div>
             </div>
+            {revealResultMessage && <div className="meta-bar">{revealResultMessage}</div>}
           </div>
           {grouped.map((item) => (
             <section className="results group-card" key={item.company}>
