@@ -8,6 +8,8 @@ import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
 import {
   listEnrichedContacts,
   markContactsAddedToMeetAlfred,
+  rejectCompany,
+  updateContactEditableField,
   updateContactFirstName,
   updateContactEmails,
 } from "./lib/enrichedContactsRepo.js";
@@ -115,6 +117,127 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                 devRevealLog.error("handler error", { pathname, msg });
                 res.statusCode = 502;
                 res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: msg }));
+              }
+            })();
+          });
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "POST" || pathname !== "/api/contact-update-field") {
+            next();
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          req.on("end", () => {
+            void (async () => {
+              try {
+                const raw = Buffer.concat(chunks).toString("utf8");
+                const body = JSON.parse(raw) as {
+                  id?: number;
+                  field?:
+                    | "first_name"
+                    | "contact_name"
+                    | "title"
+                    | "contact_linkedin"
+                    | "contact_location"
+                    | "predicted_origin_of_name"
+                    | "is_predicted_origin_blacklisted"
+                    | "is_contact_location_blacklisted"
+                    | "added_to_meetalfred_campaign";
+                  value?: unknown;
+                };
+                const id = Number(body.id);
+                const field = body.field;
+                if (!Number.isFinite(id) || id <= 0) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(JSON.stringify({ error: "id must be a positive number" }));
+                  return;
+                }
+                const booleanFields = new Set([
+                  "is_predicted_origin_blacklisted",
+                  "is_contact_location_blacklisted",
+                  "added_to_meetalfred_campaign",
+                ]);
+                const value = booleanFields.has(field ?? "")
+                  ? Boolean(body.value)
+                  : String(body.value ?? "").trim();
+                if (!field) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(JSON.stringify({ error: "field is required" }));
+                  return;
+                }
+                const ok = await updateContactEditableField(
+                  { id, field, value },
+                  env.POSTGRES_URL || env.DATABASE_URL,
+                );
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ ok }));
+              } catch (e) {
+                const msg =
+                  e instanceof Error ? e.message : "Failed to update contact field";
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ error: msg }));
+              }
+            })();
+          });
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "POST" || pathname !== "/api/company-reject") {
+            next();
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          req.on("end", () => {
+            void (async () => {
+              try {
+                const raw = Buffer.concat(chunks).toString("utf8");
+                const body = JSON.parse(raw) as {
+                  companyId?: number;
+                  rejectionReason?: string;
+                };
+                const companyId = Number(body.companyId);
+                const rejectionReason = (body.rejectionReason ?? "").trim();
+                if (!Number.isFinite(companyId) || companyId <= 0) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(
+                    JSON.stringify({ error: "companyId must be a positive number" }),
+                  );
+                  return;
+                }
+                if (!rejectionReason) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(JSON.stringify({ error: "rejectionReason is required" }));
+                  return;
+                }
+                const ok = await rejectCompany(
+                  { companyId, rejectionReason },
+                  env.POSTGRES_URL || env.DATABASE_URL,
+                );
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ ok }));
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : "Failed to reject company";
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
                 res.end(JSON.stringify({ error: msg }));
               }
             })();

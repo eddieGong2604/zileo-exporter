@@ -166,3 +166,81 @@ export async function updateContactFirstName(
     client.release();
   }
 }
+
+export type ContactEditableField =
+  | "first_name"
+  | "contact_name"
+  | "title"
+  | "contact_linkedin"
+  | "contact_location"
+  | "predicted_origin_of_name"
+  | "is_predicted_origin_blacklisted"
+  | "is_contact_location_blacklisted"
+  | "added_to_meetalfred_campaign";
+
+const CONTACT_EDITABLE_FIELD_SQL: Record<ContactEditableField, string> = {
+  first_name: "first_name",
+  contact_name: "contact_name",
+  title: "title",
+  contact_linkedin: "contact_linkedin",
+  contact_location: "contact_location",
+  predicted_origin_of_name: "predicted_origin_of_name",
+  is_predicted_origin_blacklisted: "is_predicted_origin_blacklisted",
+  is_contact_location_blacklisted: "is_contact_location_blacklisted",
+  added_to_meetalfred_campaign: "added_to_meetalfred_campaign",
+};
+
+export async function updateContactEditableField(
+  input: { id: number; field: ContactEditableField; value: string | boolean },
+  connectionStringOverride?: string,
+): Promise<boolean> {
+  if (!Number.isFinite(input.id) || input.id <= 0) return false;
+  const sqlField = CONTACT_EDITABLE_FIELD_SQL[input.field];
+  if (!sqlField) return false;
+  const client = await getPool(connectionStringOverride).connect();
+  try {
+    const res = await client.query(
+      `UPDATE contacts
+       SET ${sqlField} = $2, updated_at = NOW()
+       WHERE id = $1`,
+      [input.id, input.value],
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch (error) {
+    log.error("updateContactEditableField failed", {
+      id: input.id,
+      field: input.field,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function rejectCompany(
+  input: { companyId: number; rejectionReason: string },
+  connectionStringOverride?: string,
+): Promise<boolean> {
+  if (!Number.isFinite(input.companyId) || input.companyId <= 0) return false;
+  const client = await getPool(connectionStringOverride).connect();
+  try {
+    const res = await client.query(
+      `UPDATE companies
+       SET status = 'rejected',
+           rejection_reason = $2,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [input.companyId, input.rejectionReason],
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch (error) {
+    log.error("rejectCompany failed", {
+      companyId: input.companyId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}

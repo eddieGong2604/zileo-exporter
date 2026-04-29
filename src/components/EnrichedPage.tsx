@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import { bulkRevealEmails } from "../api/apolloBulkReveal";
-import { updateContactFirstName as updateContactFirstNameApi } from "../api/contactFirstName";
+import { rejectCompany as rejectCompanyApi } from "../api/companyReject";
+import {
+  updateContactField,
+  type EditableContactField,
+} from "../api/contactUpdateField";
 import { fetchEnrichedContacts } from "../api/enrichedContacts";
 import { bulkSendMeetAlfred, fetchMeetAlfredCampaigns } from "../api/meetAlfred";
 import type { EnrichedContact } from "../types/enriched";
@@ -20,6 +24,11 @@ type MeetAlfredCampaign = {
   label: string;
   status?: string;
   webhookKey: string;
+};
+type EditableColumnConfig = {
+  field: EditableContactField;
+  valueKey: keyof EnrichedContact;
+  kind: "text" | "boolean";
 };
 
 const LS_KEYS = {
@@ -58,56 +67,92 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
 ]);
 
 const CONTACT_COLUMN_DEFS: ColumnDef[] = [
-  { key: "contact.id", label: "Contact Id", getValue: (row) => row.id },
-  { key: "contact.company_id", label: "Contact Company Id", getValue: (row) => row.companyId },
-  { key: "contact.first_name", label: "First Name", getValue: (row) => row.firstName },
-  { key: "contact.contact_name", label: "Contact Name", getValue: (row) => row.contactName },
+  { key: "contact.id", label: "ID", getValue: (row) => row.id },
+  { key: "contact.company_id", label: "Company ID", getValue: (row) => row.companyId },
+  { key: "contact.first_name", label: "First", getValue: (row) => row.firstName },
+  { key: "contact.contact_name", label: "Name", getValue: (row) => row.contactName },
   { key: "contact.title", label: "Title", getValue: (row) => row.title },
   {
     key: "contact.contact_linkedin",
-    label: "Contact Linkedin",
+    label: "LinkedIn",
     getValue: (row) => row.contactLinkedin,
   },
   {
     key: "contact.apollo_profile_href",
-    label: "Apollo Profile Href",
+    label: "Apollo URL",
     getValue: (row) => row.apolloProfileHref,
   },
   {
     key: "contact.contact_location",
-    label: "Contact Location",
+    label: "Location",
     getValue: (row) => row.contactLocation,
   },
   {
     key: "contact.predicted_origin_of_name",
-    label: "Predicted Origin",
+    label: "Origin",
     getValue: (row) => row.predictedOriginOfName,
   },
   {
     key: "contact.country_id",
-    label: "Country Id",
+    label: "Country",
     getValue: (row) => row.countryId,
   },
   {
     key: "contact.is_predicted_origin_blacklisted",
-    label: "Origin Blacklisted",
+    label: "Origin BL",
     getValue: (row) => row.isPredictedOriginBlacklisted,
   },
   {
     key: "contact.is_contact_location_blacklisted",
-    label: "Location Blacklisted",
+    label: "Location BL",
     getValue: (row) => row.isContactLocationBlacklisted,
   },
   {
     key: "contact.added_to_meetalfred_campaign",
-    label: "Added To Meet Alfred Campaign",
+    label: "In MA",
     getValue: (row) => row.addedToMeetAlfredCampaign,
   },
-  { key: "contact.source", label: "Contact Source", getValue: (row) => row.source },
-  { key: "contact.email", label: "Contact Email", getValue: (row) => row.email },
-  { key: "contact.created_at", label: "Contact Created At", getValue: (row) => row.createdAt },
-  { key: "contact.updated_at", label: "Contact Updated At", getValue: (row) => row.updatedAt },
+  { key: "contact.source", label: "Source", getValue: (row) => row.source },
+  { key: "contact.email", label: "Email", getValue: (row) => row.email },
+  { key: "contact.created_at", label: "Created", getValue: (row) => row.createdAt },
+  { key: "contact.updated_at", label: "Updated", getValue: (row) => row.updatedAt },
 ];
+
+const EDITABLE_COLUMN_CONFIG: Partial<Record<string, EditableColumnConfig>> = {
+  "contact.first_name": { field: "first_name", valueKey: "firstName", kind: "text" },
+  "contact.contact_name": { field: "contact_name", valueKey: "contactName", kind: "text" },
+  "contact.title": { field: "title", valueKey: "title", kind: "text" },
+  "contact.contact_linkedin": {
+    field: "contact_linkedin",
+    valueKey: "contactLinkedin",
+    kind: "text",
+  },
+  "contact.contact_location": {
+    field: "contact_location",
+    valueKey: "contactLocation",
+    kind: "text",
+  },
+  "contact.predicted_origin_of_name": {
+    field: "predicted_origin_of_name",
+    valueKey: "predictedOriginOfName",
+    kind: "text",
+  },
+  "contact.is_predicted_origin_blacklisted": {
+    field: "is_predicted_origin_blacklisted",
+    valueKey: "isPredictedOriginBlacklisted",
+    kind: "boolean",
+  },
+  "contact.is_contact_location_blacklisted": {
+    field: "is_contact_location_blacklisted",
+    valueKey: "isContactLocationBlacklisted",
+    kind: "boolean",
+  },
+  "contact.added_to_meetalfred_campaign": {
+    field: "added_to_meetalfred_campaign",
+    valueKey: "addedToMeetAlfredCampaign",
+    kind: "boolean",
+  },
+};
 
 function isDateLikeColumnKey(columnKey: string): boolean {
   return (
@@ -132,6 +177,48 @@ function displayValue(value: unknown, columnKey?: string): string {
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function compactJobSourceValue(value: unknown): string {
+  const toCompact = (raw: string): string => {
+    const text = raw.trim();
+    if (!text) return "";
+    try {
+      const u = new URL(text);
+      return u.pathname || "/";
+    } catch {
+      const withoutQuery = text.split("?")[0] ?? text;
+      return withoutQuery;
+    }
+  };
+
+  const toList = (input: unknown): string[] => {
+    if (Array.isArray(input)) {
+      return input
+        .map((v) => (typeof v === "string" ? v : ""))
+        .filter((v) => v.trim().length > 0);
+    }
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+      if (!trimmed) return [];
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((v) => (typeof v === "string" ? v : ""))
+            .filter((v) => v.trim().length > 0);
+        }
+      } catch {
+        // Keep as single string.
+      }
+      return [trimmed];
+    }
+    return [];
+  };
+
+  const items = toList(value).map(toCompact).filter(Boolean);
+  if (items.length === 0) return "—";
+  return items.join(", ");
 }
 
 function companyNameFromRecord(company: Record<string, unknown> | null): string {
@@ -456,8 +543,19 @@ export function EnrichedPage() {
   const [sendResultMessage, setSendResultMessage] = useState<string | null>(null);
   const [revealingEmails, setRevealingEmails] = useState(false);
   const [revealResultMessage, setRevealResultMessage] = useState<string | null>(null);
-  const [firstNameDraftByKey, setFirstNameDraftByKey] = useState<Record<string, string>>({});
-  const [firstNameSavingKeys, setFirstNameSavingKeys] = useState<Set<string>>(new Set());
+  const [revealingEmailRowKeys, setRevealingEmailRowKeys] = useState<Set<string>>(new Set());
+  const [editTextDraftByCellKey, setEditTextDraftByCellKey] = useState<Record<string, string>>(
+    {},
+  );
+  const [editBooleanDraftByCellKey, setEditBooleanDraftByCellKey] = useState<
+    Record<string, boolean>
+  >({});
+  const [savingCellKeys, setSavingCellKeys] = useState<Set<string>>(new Set());
+  const [rejectOpenCompanyId, setRejectOpenCompanyId] = useState<number | null>(null);
+  const [rejectReasonByCompanyId, setRejectReasonByCompanyId] = useState<
+    Record<number, string>
+  >({});
+  const [rejectingCompanyId, setRejectingCompanyId] = useState<number | null>(null);
 
   const loadRows = async () => {
     setLoading(true);
@@ -650,6 +748,11 @@ export function EnrichedPage() {
     }));
   }, [groupByCompany, sortedRows]);
 
+  const selectedRowsForActions = useMemo(
+    () => sortedRows.filter((row) => selectedRowKeys.has(selectionKeyForRow(row))),
+    [sortedRows, selectedRowKeys],
+  );
+
   const toggleSort = (columnKey: string) => {
     setSortState((prev) => {
       if (!prev || prev.key !== columnKey) return { key: columnKey, direction: "asc" };
@@ -721,9 +824,7 @@ export function EnrichedPage() {
   };
 
   const sendSelectedToMeetAlfred = async () => {
-    const selectedRows = sortedRows.filter((row) =>
-      selectedRowKeys.has(selectionKeyForRow(row)),
-    );
+    const selectedRows = selectedRowsForActions;
     if (selectedRows.length === 0) return;
     const [webhookKey, campaignIdRaw] = selectedCampaignComposite.split("::");
     const campaignId = Number(campaignIdRaw);
@@ -759,9 +860,7 @@ export function EnrichedPage() {
   };
 
   const revealEmailsForSelectedRows = async () => {
-    const selectedRows = sortedRows.filter((row) =>
-      selectedRowKeys.has(selectionKeyForRow(row)),
-    );
+    const selectedRows = selectedRowsForActions;
     if (!selectedRows.length) return;
     setRevealingEmails(true);
     setRevealResultMessage(null);
@@ -789,33 +888,34 @@ export function EnrichedPage() {
     }
   };
 
-  const saveFirstNameForRow = async (row: EnrichedContact) => {
-    const id = Number(row.id);
-    if (!Number.isFinite(id) || id <= 0) return;
+  const revealEmailForRow = async (row: EnrichedContact) => {
     const rowKey = selectionKeyForRow(row);
-    const current = (row.firstName ?? "").trim();
-    const draft = (firstNameDraftByKey[rowKey] ?? current).trim();
-    if (draft === current) return;
-    setFirstNameSavingKeys((prev) => {
+    const id = Number(row.id ?? 0);
+    const linkedinUrl = (row.contactLinkedin ?? "").trim();
+    if (id <= 0 || !linkedinUrl) return;
+    setRevealingEmailRowKeys((prev) => {
       const next = new Set(prev);
       next.add(rowKey);
       return next;
     });
     setError(null);
     try {
-      await updateContactFirstNameApi({ id, firstName: draft });
-      setRows((prev) =>
-        prev.map((item) => (item.id === row.id ? { ...item, firstName: draft } : item)),
-      );
-      setFirstNameDraftByKey((prev) => {
-        const next = { ...prev };
-        delete next[rowKey];
-        return next;
+      await bulkRevealEmails({
+        contacts: [
+          {
+            id,
+            linkedinUrl,
+            firstName: (row.firstName ?? "").trim(),
+            contactName: (row.contactName ?? "").trim(),
+            companyName: companyNameFromRow(row),
+          },
+        ],
       });
+      await loadRows();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update first name");
+      setError(e instanceof Error ? e.message : "Failed to reveal email");
     } finally {
-      setFirstNameSavingKeys((prev) => {
+      setRevealingEmailRowKeys((prev) => {
         const next = new Set(prev);
         next.delete(rowKey);
         return next;
@@ -823,33 +923,155 @@ export function EnrichedPage() {
     }
   };
 
+  const submitRejectCompany = async (companyId: number) => {
+    const reason = (rejectReasonByCompanyId[companyId] ?? "").trim();
+    if (!reason) {
+      setError("Please enter a rejection reason");
+      return;
+    }
+    setRejectingCompanyId(companyId);
+    setError(null);
+    try {
+      await rejectCompanyApi({ companyId, rejectionReason: reason });
+      setRejectOpenCompanyId(null);
+      await loadRows();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to reject company");
+    } finally {
+      setRejectingCompanyId(null);
+    }
+  };
+
+  const saveEditableCell = async (row: EnrichedContact, columnKey: string) => {
+    const config = EDITABLE_COLUMN_CONFIG[columnKey];
+    if (!config) return;
+    const id = Number(row.id);
+    if (!Number.isFinite(id) || id <= 0) return;
+    const rowKey = selectionKeyForRow(row);
+    const cellKey = `${rowKey}::${columnKey}`;
+    const sourceRaw = row[config.valueKey];
+    const sourceText = typeof sourceRaw === "string" ? sourceRaw.trim() : "";
+    const sourceBool = sourceRaw === true;
+    const draftText = (editTextDraftByCellKey[cellKey] ?? sourceText).trim();
+    const draftBool = editBooleanDraftByCellKey[cellKey] ?? sourceBool;
+    const draftValue = config.kind === "boolean" ? draftBool : draftText;
+    const sourceValue = config.kind === "boolean" ? sourceBool : sourceText;
+    if (draftValue === sourceValue) return;
+    setSavingCellKeys((prev) => {
+      const next = new Set(prev);
+      next.add(cellKey);
+      return next;
+    });
+    setError(null);
+    try {
+      await updateContactField({
+        id,
+        field: config.field,
+        value: draftValue as string | boolean,
+      });
+      setRows((prev) =>
+        prev.map((item) =>
+          item.id === row.id
+            ? ({
+                ...item,
+                [config.valueKey]: draftValue,
+              } as EnrichedContact)
+            : item,
+        ),
+      );
+      setEditTextDraftByCellKey((prev) => {
+        const next = { ...prev };
+        delete next[cellKey];
+        return next;
+      });
+      setEditBooleanDraftByCellKey((prev) => {
+        const next = { ...prev };
+        delete next[cellKey];
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update contact field");
+    } finally {
+      setSavingCellKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(cellKey);
+        return next;
+      });
+    }
+  };
+
   const renderCell = (row: EnrichedContact, column: ColumnDef) => {
-    if (column.key !== "contact.first_name") {
+    if (column.key === "company.source_jobs") {
+      return compactJobSourceValue(column.getValue(row));
+    }
+
+    if (column.key === "contact.email") {
+      const rowKey = selectionKeyForRow(row);
+      const revealing = revealingEmailRowKeys.has(rowKey);
+      const id = Number(row.id ?? 0);
+      const hasLinkedin = (row.contactLinkedin ?? "").trim().length > 0;
+      const canReveal = id > 0 && hasLinkedin && !revealing;
+      const emailText = (row.email ?? "").trim();
+      return (
+        <div className="inline-edit-cell">
+          <span>{emailText || "—"}</span>
+          <button
+            type="button"
+            className="inline-edit-save-btn"
+            disabled={!canReveal}
+            onClick={() => void revealEmailForRow(row)}
+          >
+            {revealing ? "..." : "Reveal"}
+          </button>
+        </div>
+      );
+    }
+
+    const config = EDITABLE_COLUMN_CONFIG[column.key];
+    if (!config) {
       return displayValue(column.getValue(row), column.key);
     }
     const rowKey = selectionKeyForRow(row);
-    const isSaving = firstNameSavingKeys.has(rowKey);
-    const sourceValue = (row.firstName ?? "").trim();
-    const draft = firstNameDraftByKey[rowKey] ?? sourceValue;
-    const dirty = draft.trim() !== sourceValue;
-    const canSave = Number.isFinite(Number(row.id)) && Number(row.id) > 0 && dirty && !isSaving;
+    const cellKey = `${rowKey}::${column.key}`;
+    const isSaving = savingCellKeys.has(cellKey);
+    const sourceRaw = row[config.valueKey];
+    const sourceText = typeof sourceRaw === "string" ? sourceRaw.trim() : "";
+    const sourceBool = sourceRaw === true;
+    const draftText = editTextDraftByCellKey[cellKey] ?? sourceText;
+    const draftBool = editBooleanDraftByCellKey[cellKey] ?? sourceBool;
+    const dirty = config.kind === "boolean" ? draftBool !== sourceBool : draftText.trim() !== sourceText;
+    const canSave =
+      Number.isFinite(Number(row.id)) && Number(row.id) > 0 && dirty && !isSaving;
     return (
       <div className="inline-edit-cell">
-        <input
-          className="inline-edit-input"
-          type="text"
-          value={draft}
-          onChange={(e) => {
-            const value = e.target.value;
-            setFirstNameDraftByKey((prev) => ({ ...prev, [rowKey]: value }));
-          }}
-          placeholder="First name"
-        />
+        {config.kind === "boolean" ? (
+          <input
+            type="checkbox"
+            checked={draftBool}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setEditBooleanDraftByCellKey((prev) => ({ ...prev, [cellKey]: checked }));
+            }}
+          />
+        ) : (
+          <input
+            className={`inline-edit-input ${
+              column.key === "contact.contact_linkedin" ? "inline-edit-input-linkedin" : ""
+            }`}
+            type="text"
+            value={draftText}
+            onChange={(e) => {
+              const value = e.target.value;
+              setEditTextDraftByCellKey((prev) => ({ ...prev, [cellKey]: value }));
+            }}
+            placeholder={column.label}
+          />
+        )}
         <button
           type="button"
           className="inline-edit-save-btn"
           disabled={!canSave}
-          onClick={() => void saveFirstNameForRow(row)}
+          onClick={() => void saveEditableCell(row, column.key)}
         >
           {isSaving ? "..." : "Save"}
         </button>
@@ -1250,6 +1472,32 @@ export function EnrichedPage() {
               <p className="filter-fieldset-hint">
                 Selected leads: <strong>{selectedCount}</strong>
               </p>
+              {selectedRowsForActions.length > 0 && (
+                <div className="meet-alfred-preview-wrap">
+                  <table className="meet-alfred-preview-table">
+                    <thead>
+                      <tr>
+                        <th>LinkedIn URL</th>
+                        <th>First Name</th>
+                        <th>Company Name</th>
+                        <th>Email</th>
+                        <th>Country</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedRowsForActions.map((row) => (
+                        <tr key={`preview-${selectionKeyForRow(row)}`}>
+                          <td>{(row.contactLinkedin ?? "").trim() || "—"}</td>
+                          <td>{firstNameFromRow(row) || "—"}</td>
+                          <td>{companyNameFromRow(row) || "—"}</td>
+                          <td>{(row.email ?? "").trim() || "—"}</td>
+                          <td>{companyCountryFromRow(row) || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
               <label className="field">
                 <span>Campaign</span>
                 <select
@@ -1289,7 +1537,7 @@ export function EnrichedPage() {
                 disabled={
                   sendingToMeetAlfred ||
                   campaignsLoading ||
-                  selectedCount === 0 ||
+                  selectedRowsForActions.length === 0 ||
                   !selectedCampaignComposite
                 }
                 onClick={() => void sendSelectedToMeetAlfred()}
@@ -1375,61 +1623,116 @@ export function EnrichedPage() {
 
       {!loading && !error && groupByCompany && (
         <div className="grouped-wrap">
-          <div className="results">
-            <div className="meta-bar meta-bar-row">
-              <span>
-                {sortedRows.length} contacts
-                <span className="meta-filter-hint">
-                  {" "}
-                  ·{" "}
-                  {filterSummary(
-                    statusFilter,
-                    meetAlfredAddedFilter,
-                    excludePredictedOriginBlacklist,
-                    excludeContactLocationBlacklist,
-                    sourceCountrySelection,
-                  )}
-                </span>
+          <div className="meta-bar meta-bar-row grouped-toolbar">
+            <span>
+              {sortedRows.length} contacts
+              <span className="meta-filter-hint">
+                {" "}
+                ·{" "}
+                {filterSummary(
+                  statusFilter,
+                  meetAlfredAddedFilter,
+                  excludePredictedOriginBlacklist,
+                  excludeContactLocationBlacklist,
+                  sourceCountrySelection,
+                )}
               </span>
-              <div className="meta-actions">
-                <span className="selection-cart">
-                  Selected: <strong>{selectedCount}</strong>
-                </span>
-                <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
-                  {allFilteredSelected ? "Unselect all" : "Select all"}
-                </button>
-                <button
-                  type="button"
-                  className="column-btn"
-                  disabled={selectedCount === 0}
-                  onClick={openCsvExportModal}
-                >
-                  Export CSV
-                </button>
-                <button
-                  type="button"
-                  className="column-btn"
-                  disabled={selectedCount === 0 || revealingEmails}
-                  onClick={() => void revealEmailsForSelectedRows()}
-                >
-                  {revealingEmails ? "Revealing..." : "Bulk Reveal Email"}
-                </button>
-                <button
-                  type="button"
-                  className="column-btn"
-                  disabled={selectedCount === 0}
-                  onClick={() => void openMeetAlfredModal()}
-                >
-                  Bulk Send To Meet Alfred
-                </button>
-              </div>
+            </span>
+            <div className="meta-actions">
+              <span className="selection-cart">
+                Selected: <strong>{selectedCount}</strong>
+              </span>
+              <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
+                {allFilteredSelected ? "Unselect all" : "Select all"}
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0}
+                onClick={openCsvExportModal}
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0 || revealingEmails}
+                onClick={() => void revealEmailsForSelectedRows()}
+              >
+                {revealingEmails ? "Revealing..." : "Bulk Reveal Email"}
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0}
+                onClick={() => void openMeetAlfredModal()}
+              >
+                Bulk Send To Meet Alfred
+              </button>
             </div>
-            {revealResultMessage && <div className="meta-bar">{revealResultMessage}</div>}
           </div>
+          {revealResultMessage && <div className="meta-bar">{revealResultMessage}</div>}
           {grouped.map((item) => (
             <section className="results group-card" key={item.company}>
-              <div className="meta-bar">
-                {item.company} ({item.contacts.length})
+              <div className="meta-bar group-company-head">
+                <span>
+                  {item.company} ({item.contacts.length})
+                </span>
+                {(() => {
+                  const companyIdValue = item.contacts[0]?.company?.id;
+                  const companyId =
+                    typeof companyIdValue === "number" && companyIdValue > 0
+                      ? companyIdValue
+                      : null;
+                  if (!companyId) return null;
+                  const reasonDraft = rejectReasonByCompanyId[companyId] ?? "";
+                  const isOpen = rejectOpenCompanyId === companyId;
+                  const isSaving = rejectingCompanyId === companyId;
+                  return (
+                    <div className="group-company-actions">
+                      {!isOpen ? (
+                        <button
+                          type="button"
+                          className="column-btn btn-reject-company"
+                          onClick={() => setRejectOpenCompanyId(companyId)}
+                        >
+                          Reject
+                        </button>
+                      ) : (
+                        <div className="reject-inline-form">
+                          <input
+                            type="text"
+                            className="inline-edit-input"
+                            placeholder="Rejection reason"
+                            value={reasonDraft}
+                            onChange={(e) =>
+                              setRejectReasonByCompanyId((prev) => ({
+                                ...prev,
+                                [companyId]: e.target.value,
+                              }))
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="inline-edit-save-btn"
+                            disabled={isSaving || reasonDraft.trim().length === 0}
+                            onClick={() => void submitRejectCompany(companyId)}
+                          >
+                            {isSaving ? "Saving..." : "Submit"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setRejectOpenCompanyId(null)}
+                            disabled={isSaving}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               <div className="table-wrap">
                 <table>
