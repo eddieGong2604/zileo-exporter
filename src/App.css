@@ -302,6 +302,16 @@ tr:last-child td {
   color: #1e40af;
 }
 
+.job-source-inline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.company-description-preview {
+  cursor: default;
+}
+
 .mono {
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
@@ -707,8 +717,14 @@ tr:last-child td {
 
 .column-picker-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem 0.8rem;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.column-config-modal .column-picker-list {
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  padding-right: 0.2rem;
 }
 
 .column-toggle-item {
@@ -717,6 +733,20 @@ tr:last-child td {
   gap: 0.35rem;
   color: #334155;
   font-size: 0.8rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  cursor: grab;
+  user-select: none;
+}
+
+.column-toggle-item:active {
+  cursor: grabbing;
+}
+
+.column-toggle-item--dragging {
+  opacity: 0.55;
 }
 
 .column-config-modal {

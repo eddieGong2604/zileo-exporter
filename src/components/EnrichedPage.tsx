@@ -19,6 +19,7 @@ type SortDirection = "asc" | "desc";
 type SortState = { key: string; direction: SortDirection } | null;
 type CompanyStatusFilter = "all" | "approved" | "queued" | "rejected";
 type MeetAlfredAddedFilter = "all" | "added" | "not_added";
+type LatestJobPostedFilter = "24h" | "3d" | "1w" | "all";
 type MeetAlfredCampaign = {
   id: number;
   label: string;
@@ -36,9 +37,12 @@ const LS_KEYS = {
   statusFilter: "enriched.statusFilter",
   excludeOriginBlacklist: "enriched.excludeOriginBlacklist",
   excludeLocationBlacklist: "enriched.excludeLocationBlacklist",
+  excludeNotALead: "enriched.excludeNotALead",
   meetAlfredAddedFilter: "enriched.meetAlfredAddedFilter",
   sourceCountries: "enriched.sourceCountries",
+  latestJobPosted: "enriched.latestJobPosted",
   visibleColumns: "enriched.visibleColumns",
+  columnOrder: "enriched.columnOrder",
 } as const;
 
 const SOURCE_COUNTRY_OPTIONS = [
@@ -64,6 +68,7 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
   "contact.is_predicted_origin_blacklisted",
   "contact.is_contact_location_blacklisted",
   "contact.added_to_meetalfred_campaign",
+  "contact.not_a_lead",
 ]);
 
 const CONTACT_COLUMN_DEFS: ColumnDef[] = [
@@ -112,6 +117,11 @@ const CONTACT_COLUMN_DEFS: ColumnDef[] = [
     label: "In MA",
     getValue: (row) => row.addedToMeetAlfredCampaign,
   },
+  {
+    key: "contact.not_a_lead",
+    label: "Not Lead",
+    getValue: (row) => row.notALead,
+  },
   { key: "contact.source", label: "Source", getValue: (row) => row.source },
   { key: "contact.email", label: "Email", getValue: (row) => row.email },
   { key: "contact.created_at", label: "Created", getValue: (row) => row.createdAt },
@@ -152,6 +162,11 @@ const EDITABLE_COLUMN_CONFIG: Partial<Record<string, EditableColumnConfig>> = {
     valueKey: "addedToMeetAlfredCampaign",
     kind: "boolean",
   },
+  "contact.not_a_lead": {
+    field: "not_a_lead",
+    valueKey: "notALead",
+    kind: "boolean",
+  },
 };
 
 function isDateLikeColumnKey(columnKey: string): boolean {
@@ -179,7 +194,7 @@ function displayValue(value: unknown, columnKey?: string): string {
   return JSON.stringify(value);
 }
 
-function compactJobSourceValue(value: unknown): string {
+function jobSourceLinks(value: unknown): Array<{ href: string; label: string }> {
   const toCompact = (raw: string): string => {
     const text = raw.trim();
     if (!text) return "";
@@ -187,16 +202,14 @@ function compactJobSourceValue(value: unknown): string {
       const u = new URL(text);
       return u.pathname || "/";
     } catch {
-      const withoutQuery = text.split("?")[0] ?? text;
-      return withoutQuery;
+      return (text.split("?")[0] ?? text).trim();
     }
   };
-
   const toList = (input: unknown): string[] => {
     if (Array.isArray(input)) {
       return input
-        .map((v) => (typeof v === "string" ? v : ""))
-        .filter((v) => v.trim().length > 0);
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .filter(Boolean);
     }
     if (typeof input === "string") {
       const trimmed = input.trim();
@@ -205,8 +218,8 @@ function compactJobSourceValue(value: unknown): string {
         const parsed = JSON.parse(trimmed) as unknown;
         if (Array.isArray(parsed)) {
           return parsed
-            .map((v) => (typeof v === "string" ? v : ""))
-            .filter((v) => v.trim().length > 0);
+            .map((v) => (typeof v === "string" ? v.trim() : ""))
+            .filter(Boolean);
         }
       } catch {
         // Keep as single string.
@@ -215,10 +228,13 @@ function compactJobSourceValue(value: unknown): string {
     }
     return [];
   };
+  return toList(value).map((href) => ({ href, label: toCompact(href) || href }));
+}
 
-  const items = toList(value).map(toCompact).filter(Boolean);
-  if (items.length === 0) return "—";
-  return items.join(", ");
+function truncateWords(input: string, maxWords: number): string {
+  const words = input.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return words.join(" ");
+  return `${words.slice(0, maxWords).join(" ")}...`;
 }
 
 function companyNameFromRecord(company: Record<string, unknown> | null): string {
@@ -267,6 +283,19 @@ function sortColumnsByVisibility(
   return columns.filter((column) => visibleColumnKeys.has(column.key));
 }
 
+function sortColumnsByOrder(columns: ColumnDef[], order: string[]): ColumnDef[] {
+  if (order.length === 0) return columns;
+  const rank = new Map(order.map((key, idx) => [key, idx]));
+  return [...columns].sort((a, b) => {
+    const ai = rank.get(a.key);
+    const bi = rank.get(b.key);
+    if (ai === undefined && bi === undefined) return 0;
+    if (ai === undefined) return 1;
+    if (bi === undefined) return -1;
+    return ai - bi;
+  });
+}
+
 function compareValues(a: unknown, b: unknown, columnKey: string): number {
   const normalize = (value: unknown): string | number | null => {
     if (value === null || value === undefined) return null;
@@ -308,67 +337,14 @@ function selectionKeyForRow(row: EnrichedContact): string {
   return `${companyId}::${contactId}::${linkedin}::${name}`;
 }
 
-function isTruthyBlacklistFlag(value: unknown): boolean {
-  if (value === true) return true;
-  if (typeof value === "string") {
-    const s = value.trim().toLowerCase();
-    return s === "true" || s === "t" || s === "1" || s === "yes";
-  }
-  return false;
-}
-
-function normalizeSourceCountry(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-/** True when DB `source_country` matches one of the canonical options (with common aliases). */
-function sourceCountryMatchesOption(dbValue: string, option: string): boolean {
-  const n = normalizeSourceCountry(dbValue);
-  if (normalizeSourceCountry(option) === n) return true;
-  if (option === "Australia") {
-    return n === "au" || n === "aus";
-  }
-  if (option === "United States") {
-    return (
-      n === "usa" ||
-      n === "us" ||
-      n === "u.s." ||
-      n === "u.s.a." ||
-      n === "united states of america"
-    );
-  }
-  if (option === "United Kingdom") {
-    return (
-      n === "uk" ||
-      n === "gb" ||
-      n === "great britain" ||
-      n === "united kingdon" ||
-      n === "united kinadom" ||
-      n === "united kindgom"
-    );
-  }
-  return false;
-}
-
-function rowMatchesSourceCountryFilter(
-  row: EnrichedContact,
-  selected: ReadonlySet<string>,
-): boolean {
-  if (selected.size === 0) return true;
-  const raw = row.company?.source_country;
-  if (typeof raw !== "string" || !raw.trim()) return false;
-  for (const opt of selected) {
-    if (sourceCountryMatchesOption(raw, opt)) return true;
-  }
-  return false;
-}
-
 function filterSummary(
   status: CompanyStatusFilter,
   meetAlfredAddedFilter: MeetAlfredAddedFilter,
   excludeOriginBlacklist: boolean,
   excludeLocationBlacklist: boolean,
+  excludeNotALead: boolean,
   sourceCountries: ReadonlySet<string>,
+  latestJobPosted: LatestJobPostedFilter,
 ): string {
   const statusPart =
     status === "all" ? "All statuses" : `${status[0]!.toUpperCase()}${status.slice(1)}`;
@@ -386,6 +362,7 @@ function filterSummary(
   parts.push(
     excludeLocationBlacklist ? "Location not blacklisted" : "Any location blacklist",
   );
+  parts.push(excludeNotALead ? "Exclude not-a-lead" : "Include not-a-lead");
   if (sourceCountries.size === 0) {
     parts.push("All source countries");
   } else {
@@ -393,6 +370,15 @@ function filterSummary(
       `Source country: ${[...sourceCountries].sort((a, b) => a.localeCompare(b)).join(", ")}`,
     );
   }
+  parts.push(
+    latestJobPosted === "all"
+      ? "Latest job: all time"
+      : latestJobPosted === "24h"
+        ? "Latest job: 24h"
+        : latestJobPosted === "3d"
+          ? "Latest job: 3d"
+          : "Latest job: 1w",
+  );
   return parts.join(" · ");
 }
 
@@ -483,6 +469,7 @@ export function EnrichedPage() {
     return true;
   });
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<Set<string>>(new Set());
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [sortState, setSortState] = useState<SortState>(null);
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
   const [initializedVisibleColumns, setInitializedVisibleColumns] = useState(false);
@@ -512,6 +499,12 @@ export function EnrichedPage() {
     if (raw === "true") return true;
     return true;
   });
+  const [excludeNotALead, setExcludeNotALead] = useState(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.excludeNotALead);
+    if (raw === "false") return false;
+    if (raw === "true") return true;
+    return true;
+  });
   const [sourceCountrySelection, setSourceCountrySelection] = useState<Set<string>>(
     () => {
       const raw = safeReadLocalStorage(LS_KEYS.sourceCountries);
@@ -528,6 +521,14 @@ export function EnrichedPage() {
       }
     },
   );
+  const [latestJobPostedFilter, setLatestJobPostedFilter] = useState<LatestJobPostedFilter>(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.latestJobPosted);
+    if (raw === "24h" || raw === "3d" || raw === "1w" || raw === "all") return raw;
+    return "all";
+  });
+  const [page, setPage] = useState(1);
+  const [totalContacts, setTotalContacts] = useState(0);
+  const [totalCompanies, setTotalCompanies] = useState(0);
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
   const [csvExportModalOpen, setCsvExportModalOpen] = useState(false);
@@ -556,13 +557,26 @@ export function EnrichedPage() {
     Record<number, string>
   >({});
   const [rejectingCompanyId, setRejectingCompanyId] = useState<number | null>(null);
+  const [draggingColumnKey, setDraggingColumnKey] = useState<string | null>(null);
 
   const loadRows = async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchEnrichedContacts();
-      setRows(data);
+      const body = await fetchEnrichedContacts({
+        status: statusFilter,
+        meetAlfredAdded: meetAlfredAddedFilter,
+        excludeOriginBlacklisted: excludePredictedOriginBlacklist,
+        excludeLocationBlacklisted: excludeContactLocationBlacklist,
+        excludeNotALead,
+        sourceCountries: Array.from(sourceCountrySelection),
+        latestJobPosted: latestJobPostedFilter,
+        page,
+        limit: 100,
+      });
+      setRows(body.data);
+      setTotalContacts(body.meta.totalContacts);
+      setTotalCompanies(body.meta.totalCompanies);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");
     } finally {
@@ -572,7 +586,16 @@ export function EnrichedPage() {
 
   useEffect(() => {
     void loadRows();
-  }, []);
+  }, [
+    statusFilter,
+    meetAlfredAddedFilter,
+    excludePredictedOriginBlacklist,
+    excludeContactLocationBlacklist,
+    excludeNotALead,
+    sourceCountrySelection,
+    latestJobPostedFilter,
+    page,
+  ]);
 
   const columns = useMemo(() => allColumns(rows), [rows]);
 
@@ -603,6 +626,23 @@ export function EnrichedPage() {
       setVisibleColumnKeys(
         new Set(defaults.length > 0 ? defaults : columns.map((column) => column.key)),
       );
+      const savedOrderRaw = safeReadLocalStorage(LS_KEYS.columnOrder);
+      const fallbackOrder = columns.map((column) => column.key);
+      let nextOrder = fallbackOrder;
+      if (savedOrderRaw) {
+        try {
+          const savedOrder = JSON.parse(savedOrderRaw) as string[];
+          if (Array.isArray(savedOrder)) {
+            const allowed = new Set(fallbackOrder);
+            const filtered = savedOrder.filter((k) => allowed.has(k));
+            const missing = fallbackOrder.filter((k) => !filtered.includes(k));
+            nextOrder = [...filtered, ...missing];
+          }
+        } catch {
+          nextOrder = fallbackOrder;
+        }
+      }
+      setColumnOrder(nextOrder);
       setInitializedVisibleColumns(true);
       return;
     }
@@ -610,6 +650,13 @@ export function EnrichedPage() {
     setVisibleColumnKeys((prev) => {
       const columnKeys = new Set(columns.map((column) => column.key));
       return new Set(Array.from(prev).filter((key) => columnKeys.has(key)));
+    });
+    setColumnOrder((prev) => {
+      const current = columns.map((column) => column.key);
+      const allowed = new Set(current);
+      const filtered = prev.filter((key) => allowed.has(key));
+      const missing = current.filter((key) => !filtered.includes(key));
+      return [...filtered, ...missing];
     });
   }, [columns, initializedVisibleColumns, rows.length]);
 
@@ -640,11 +687,31 @@ export function EnrichedPage() {
   }, [excludeContactLocationBlacklist]);
 
   useEffect(() => {
+    safeWriteLocalStorage(LS_KEYS.excludeNotALead, String(excludeNotALead));
+  }, [excludeNotALead]);
+
+  useEffect(() => {
     safeWriteLocalStorage(
       LS_KEYS.sourceCountries,
       JSON.stringify(Array.from(sourceCountrySelection)),
     );
   }, [sourceCountrySelection]);
+
+  useEffect(() => {
+    safeWriteLocalStorage(LS_KEYS.latestJobPosted, latestJobPostedFilter);
+  }, [latestJobPostedFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    statusFilter,
+    meetAlfredAddedFilter,
+    excludePredictedOriginBlacklist,
+    excludeContactLocationBlacklist,
+    excludeNotALead,
+    sourceCountrySelection,
+    latestJobPostedFilter,
+  ]);
 
   useEffect(() => {
     if (!initializedVisibleColumns) return;
@@ -654,54 +721,25 @@ export function EnrichedPage() {
     );
   }, [visibleColumnKeys, initializedVisibleColumns]);
 
+  useEffect(() => {
+    if (!initializedVisibleColumns) return;
+    safeWriteLocalStorage(LS_KEYS.columnOrder, JSON.stringify(columnOrder));
+  }, [columnOrder, initializedVisibleColumns]);
+
+  const orderedColumns = useMemo(
+    () => sortColumnsByOrder(columns, columnOrder),
+    [columns, columnOrder],
+  );
   const visibleColumns = useMemo(
-    () => sortColumnsByVisibility(columns, visibleColumnKeys),
-    [columns, visibleColumnKeys],
+    () => sortColumnsByVisibility(orderedColumns, visibleColumnKeys),
+    [orderedColumns, visibleColumnKeys],
   );
 
-  const filteredRows = useMemo(() => {
-    return rows.filter((row) => {
-      if (statusFilter !== "all") {
-        const raw = row.company?.status;
-        if (typeof raw !== "string" || raw.trim().toLowerCase() !== statusFilter) {
-          return false;
-        }
-      }
-      if (meetAlfredAddedFilter === "added" && row.addedToMeetAlfredCampaign !== true) {
-        return false;
-      }
-      if (meetAlfredAddedFilter === "not_added" && row.addedToMeetAlfredCampaign === true) {
-        return false;
-      }
-      if (
-        excludePredictedOriginBlacklist &&
-        isTruthyBlacklistFlag(row.isPredictedOriginBlacklisted)
-      ) {
-        return false;
-      }
-      if (
-        excludeContactLocationBlacklist &&
-        isTruthyBlacklistFlag(row.isContactLocationBlacklisted)
-      ) {
-        return false;
-      }
-      if (!rowMatchesSourceCountryFilter(row, sourceCountrySelection)) {
-        return false;
-      }
-      return true;
-    });
-  }, [
-    rows,
-    statusFilter,
-    meetAlfredAddedFilter,
-    excludePredictedOriginBlacklist,
-    excludeContactLocationBlacklist,
-    sourceCountrySelection,
-  ]);
+  const filteredRows = rows;
 
   const sortedRows = useMemo(() => {
     if (!sortState) return filteredRows;
-    const active = columns.find((column) => column.key === sortState.key);
+    const active = orderedColumns.find((column) => column.key === sortState.key);
     if (!active) return filteredRows;
     const sorted = [...filteredRows].sort((leftRow, rightRow) => {
       const compared = compareValues(
@@ -712,7 +750,20 @@ export function EnrichedPage() {
       return sortState.direction === "asc" ? compared : -compared;
     });
     return sorted;
-  }, [columns, filteredRows, sortState]);
+  }, [orderedColumns, filteredRows, sortState]);
+
+  const moveColumnBefore = (dragKey: string, targetKey: string) => {
+    if (!dragKey || dragKey === targetKey) return;
+    setColumnOrder((prev) => {
+      const base = prev.length > 0 ? prev : orderedColumns.map((c) => c.key);
+      const withoutDrag = base.filter((k) => k !== dragKey);
+      const targetIdx = withoutDrag.indexOf(targetKey);
+      if (targetIdx < 0) return prev;
+      const next = [...withoutDrag];
+      next.splice(targetIdx, 0, dragKey);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const validKeys = new Set(sortedRows.map(selectionKeyForRow));
@@ -752,6 +803,7 @@ export function EnrichedPage() {
     () => sortedRows.filter((row) => selectedRowKeys.has(selectionKeyForRow(row))),
     [sortedRows, selectedRowKeys],
   );
+  const totalPages = Math.max(1, Math.ceil(totalContacts / 100));
 
   const toggleSort = (columnKey: string) => {
     setSortState((prev) => {
@@ -880,7 +932,16 @@ export function EnrichedPage() {
       setRevealResultMessage(
         `Apollo matched ${result.matchedWithEmail}/${result.requested}. Updated ${result.updated} contacts.`,
       );
-      await loadRows();
+      if (result.updates.length > 0) {
+        const byId = new Map(result.updates.map((u) => [u.id, u.email]));
+        setRows((prev) =>
+          prev.map((row) => {
+            const id = Number(row.id ?? 0);
+            const email = byId.get(id);
+            return email ? { ...row, email } : row;
+          }),
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to reveal emails");
     } finally {
@@ -900,7 +961,7 @@ export function EnrichedPage() {
     });
     setError(null);
     try {
-      await bulkRevealEmails({
+      const result = await bulkRevealEmails({
         contacts: [
           {
             id,
@@ -911,7 +972,12 @@ export function EnrichedPage() {
           },
         ],
       });
-      await loadRows();
+      const nextEmail = result.updates.find((u) => u.id === id)?.email;
+      if (nextEmail) {
+        setRows((prev) =>
+          prev.map((item) => (Number(item.id ?? 0) === id ? { ...item, email: nextEmail } : item)),
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to reveal email");
     } finally {
@@ -969,16 +1035,19 @@ export function EnrichedPage() {
         field: config.field,
         value: draftValue as string | boolean,
       });
-      setRows((prev) =>
-        prev.map((item) =>
+      setRows((prev) => {
+        if (config.field === "not_a_lead" && draftValue === true && excludeNotALead) {
+          return prev.filter((item) => item.id !== row.id);
+        }
+        return prev.map((item) =>
           item.id === row.id
             ? ({
                 ...item,
                 [config.valueKey]: draftValue,
               } as EnrichedContact)
             : item,
-        ),
-      );
+        );
+      });
       setEditTextDraftByCellKey((prev) => {
         const next = { ...prev };
         delete next[cellKey];
@@ -1001,8 +1070,36 @@ export function EnrichedPage() {
   };
 
   const renderCell = (row: EnrichedContact, column: ColumnDef) => {
+    if (column.key === "company.company_description") {
+      const raw = column.getValue(row);
+      const full = typeof raw === "string" ? raw.trim() : "";
+      if (!full) return "—";
+      return (
+        <span title={full} className="company-description-preview">
+          {truncateWords(full, 8)}
+        </span>
+      );
+    }
+
     if (column.key === "company.source_jobs") {
-      return compactJobSourceValue(column.getValue(row));
+      const links = jobSourceLinks(column.getValue(row));
+      if (links.length === 0) return "—";
+      return (
+        <div className="job-source-inline-list">
+          {links.map((item, idx) => (
+            <a
+              key={`${item.href}-${idx}`}
+              className="job-source-link"
+              href={item.href}
+              target="_blank"
+              rel="noreferrer noopener"
+              title={item.href}
+            >
+              {item.label}
+            </a>
+          ))}
+        </div>
+      );
     }
 
     if (column.key === "contact.email") {
@@ -1114,7 +1211,9 @@ export function EnrichedPage() {
                 meetAlfredAddedFilter,
                 excludePredictedOriginBlacklist,
                 excludeContactLocationBlacklist,
+                excludeNotALead,
                 sourceCountrySelection,
+                latestJobPostedFilter,
               )}
             </span>
           </button>
@@ -1135,7 +1234,7 @@ export function EnrichedPage() {
         <section className="results">
           <div className="meta-bar meta-bar-row">
             <span>
-              {sortedRows.length} contacts
+              {totalCompanies} companies · {totalContacts} contacts
               <span className="meta-filter-hint">
                 {" "}
                 ·{" "}
@@ -1144,7 +1243,9 @@ export function EnrichedPage() {
                   meetAlfredAddedFilter,
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
+                  excludeNotALead,
                   sourceCountrySelection,
+                  latestJobPostedFilter,
                 )}
               </span>
             </span>
@@ -1154,6 +1255,25 @@ export function EnrichedPage() {
               </span>
               <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
                 {allFilteredSelected ? "Unselect all" : "Select all"}
+              </button>
+              <span className="selection-cart">
+                Page <strong>{page}</strong> / {totalPages}
+              </span>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
               </button>
               <button
                 type="button"
@@ -1325,6 +1445,30 @@ export function EnrichedPage() {
                   ))}
                 </div>
               </fieldset>
+              <fieldset className="filter-fieldset">
+                <legend>Latest job posted</legend>
+                <div className="filter-radio-list">
+                  {(
+                    [
+                      ["24h", "Last 24 hours"],
+                      ["3d", "Last 3 days"],
+                      ["1w", "Last 1 week"],
+                      ["all", "All time"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label key={value} className="filter-radio-row">
+                      <input
+                        type="radio"
+                        name="latest-job-posted-filter"
+                        value={value}
+                        checked={latestJobPostedFilter === value}
+                        onChange={() => setLatestJobPostedFilter(value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
               <label className="filter-checkbox-row">
                 <input
                   type="checkbox"
@@ -1351,6 +1495,17 @@ export function EnrichedPage() {
                   </span>
                 </span>
               </label>
+              <label className="filter-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={excludeNotALead}
+                  onChange={(e) => setExcludeNotALead(e.target.checked)}
+                />
+                <span>
+                  Hide not-a-lead contacts{" "}
+                  <span className="filter-checkbox-hint">(not_a_lead is null or false passes)</span>
+                </span>
+              </label>
             </div>
             <div className="modal-foot filter-modal-foot">
               <button
@@ -1361,7 +1516,9 @@ export function EnrichedPage() {
                   setMeetAlfredAddedFilter("all");
                   setExcludePredictedOriginBlacklist(true);
                   setExcludeContactLocationBlacklist(true);
+                  setExcludeNotALead(true);
                   setSourceCountrySelection(new Set(DEFAULT_SOURCE_COUNTRY_SELECTION));
+                  setLatestJobPostedFilter("all");
                 }}
               >
                 Reset to defaults
@@ -1567,7 +1724,7 @@ export function EnrichedPage() {
                 <button
                   type="button"
                   className="column-btn"
-                  onClick={() => setVisibleColumnKeys(new Set(columns.map((col) => col.key)))}
+                  onClick={() => setVisibleColumnKeys(new Set(orderedColumns.map((col) => col.key)))}
                 >
                   Show all
                 </button>
@@ -1575,12 +1732,14 @@ export function EnrichedPage() {
                   type="button"
                   className="column-btn"
                   onClick={() => {
-                    const defaults = columns
+                    const defaults = orderedColumns
                       .map((column) => column.key)
                       .filter((key) => DEFAULT_VISIBLE_COLUMN_KEYS.has(key));
                     setVisibleColumnKeys(
                       new Set(
-                        defaults.length > 0 ? defaults : columns.map((column) => column.key),
+                        defaults.length > 0
+                          ? defaults
+                          : orderedColumns.map((column) => column.key),
                       ),
                     );
                   }}
@@ -1589,8 +1748,29 @@ export function EnrichedPage() {
                 </button>
               </div>
               <div className="column-picker-list">
-                {columns.map((column) => (
-                  <label key={column.key} className="column-toggle-item">
+                {orderedColumns.map((column) => (
+                  <label
+                    key={column.key}
+                    className={`column-toggle-item ${
+                      draggingColumnKey === column.key ? "column-toggle-item--dragging" : ""
+                    }`}
+                    draggable
+                    onDragStart={() => setDraggingColumnKey(column.key)}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (draggingColumnKey && draggingColumnKey !== column.key) {
+                        moveColumnBefore(draggingColumnKey, column.key);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (draggingColumnKey && draggingColumnKey !== column.key) {
+                        moveColumnBefore(draggingColumnKey, column.key);
+                      }
+                      setDraggingColumnKey(null);
+                    }}
+                    onDragEnd={() => setDraggingColumnKey(null)}
+                  >
                     <input
                       type="checkbox"
                       checked={visibleColumnKeys.has(column.key)}
@@ -1625,7 +1805,7 @@ export function EnrichedPage() {
         <div className="grouped-wrap">
           <div className="meta-bar meta-bar-row grouped-toolbar">
             <span>
-              {sortedRows.length} contacts
+                {totalCompanies} companies · {totalContacts} contacts
               <span className="meta-filter-hint">
                 {" "}
                 ·{" "}
@@ -1634,7 +1814,9 @@ export function EnrichedPage() {
                   meetAlfredAddedFilter,
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
+                  excludeNotALead,
                   sourceCountrySelection,
+                  latestJobPostedFilter,
                 )}
               </span>
             </span>
@@ -1644,6 +1826,25 @@ export function EnrichedPage() {
               </span>
               <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
                 {allFilteredSelected ? "Unselect all" : "Select all"}
+              </button>
+              <span className="selection-cart">
+                Page <strong>{page}</strong> / {totalPages}
+              </span>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
               </button>
               <button
                 type="button"

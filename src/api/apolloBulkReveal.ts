@@ -6,7 +6,12 @@ export async function bulkRevealEmails(input: {
     contactName: string;
     companyName: string;
   }>;
-}): Promise<{ requested: number; matchedWithEmail: number; updated: number }> {
+}): Promise<{
+  requested: number;
+  matchedWithEmail: number;
+  updated: number;
+  updates: Array<{ id: number; email: string }>;
+}> {
   const res = await fetch("/api/apollo-bulk-reveal-emails", {
     method: "POST",
     headers: { "Content-Type": "application/json", accept: "application/json" },
@@ -14,5 +19,10 @@ export async function bulkRevealEmails(input: {
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-  return JSON.parse(text) as { requested: number; matchedWithEmail: number; updated: number };
+  return JSON.parse(text) as {
+    requested: number;
+    matchedWithEmail: number;
+    updated: number;
+    updates: Array<{ id: number; email: string }>;
+  };
 }

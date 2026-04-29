@@ -149,7 +149,8 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     | "predicted_origin_of_name"
                     | "is_predicted_origin_blacklisted"
                     | "is_contact_location_blacklisted"
-                    | "added_to_meetalfred_campaign";
+                    | "added_to_meetalfred_campaign"
+                    | "not_a_lead";
                   value?: unknown;
                 };
                 const id = Number(body.id);
@@ -164,6 +165,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                   "is_predicted_origin_blacklisted",
                   "is_contact_location_blacklisted",
                   "added_to_meetalfred_campaign",
+                  "not_a_lead",
                 ]);
                 const value = booleanFields.has(field ?? "")
                   ? Boolean(body.value)
@@ -341,8 +343,9 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                   apiKey,
                   people: mapped,
                 });
+                const updates = found.map((f) => ({ id: f.contactId, email: f.email }));
                 const updated = await updateContactEmails(
-                  found.map((f) => ({ id: f.contactId, email: f.email })),
+                  updates,
                   env.POSTGRES_URL || env.DATABASE_URL,
                 );
                 res.statusCode = 200;
@@ -352,6 +355,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     requested: mapped.length,
                     matchedWithEmail: found.length,
                     updated,
+                    updates,
                   }),
                 );
               } catch (e) {
@@ -375,12 +379,38 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
 
           void (async () => {
             try {
-              const data = await listEnrichedContacts(
+              const url = new URL(req.url ?? "", "http://localhost");
+              const sourceCountries = url.searchParams.getAll("sourceCountry");
+              const out = await listEnrichedContacts(
+                {
+                  status: (url.searchParams.get("status") ?? "all") as
+                    | "all"
+                    | "approved"
+                    | "queued"
+                    | "rejected",
+                  meetAlfredAdded: (url.searchParams.get("meetAlfredAdded") ?? "all") as
+                    | "all"
+                    | "added"
+                    | "not_added",
+                  excludeOriginBlacklisted:
+                    url.searchParams.get("excludeOriginBlacklisted") !== "false",
+                  excludeLocationBlacklisted:
+                    url.searchParams.get("excludeLocationBlacklisted") !== "false",
+                  excludeNotALead: url.searchParams.get("excludeNotALead") !== "false",
+                  sourceCountries,
+                  latestJobPosted: (url.searchParams.get("latestJobPosted") ?? "all") as
+                    | "24h"
+                    | "3d"
+                    | "1w"
+                    | "all",
+                  page: Number(url.searchParams.get("page") ?? 1),
+                  limit: Number(url.searchParams.get("limit") ?? 100),
+                },
                 env.POSTGRES_URL || env.DATABASE_URL,
               );
               res.statusCode = 200;
               res.setHeader("Content-Type", "application/json; charset=utf-8");
-              res.end(JSON.stringify({ data }));
+              res.end(JSON.stringify(out));
             } catch (e) {
               const msg =
                 e instanceof Error ? e.message : "Failed to load enriched contacts";

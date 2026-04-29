@@ -22,8 +22,32 @@ export default async function handler(
   }
 
   try {
-    const data = await listEnrichedContacts();
-    sendJson(res, 200, { data });
+    const url = new URL(req.url ?? "", "http://localhost");
+    const sourceCountries = url.searchParams.getAll("sourceCountry");
+    const out = await listEnrichedContacts({
+      status: (url.searchParams.get("status") ?? "all") as
+        | "all"
+        | "approved"
+        | "queued"
+        | "rejected",
+      meetAlfredAdded: (url.searchParams.get("meetAlfredAdded") ?? "all") as
+        | "all"
+        | "added"
+        | "not_added",
+      excludeOriginBlacklisted: url.searchParams.get("excludeOriginBlacklisted") !== "false",
+      excludeLocationBlacklisted:
+        url.searchParams.get("excludeLocationBlacklisted") !== "false",
+      excludeNotALead: url.searchParams.get("excludeNotALead") !== "false",
+      sourceCountries,
+      latestJobPosted: (url.searchParams.get("latestJobPosted") ?? "all") as
+        | "24h"
+        | "3d"
+        | "1w"
+        | "all",
+      page: Number(url.searchParams.get("page") ?? 1),
+      limit: Number(url.searchParams.get("limit") ?? 100),
+    });
+    sendJson(res, 200, out);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to load enriched contacts";

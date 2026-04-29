@@ -10,6 +10,7 @@ const BOOLEAN_FIELDS = new Set<ContactEditableField>([
   "is_predicted_origin_blacklisted",
   "is_contact_location_blacklisted",
   "added_to_meetalfred_campaign",
+  "not_a_lead",
 ]);
 
 const ALLOWED_FIELDS = new Set<ContactEditableField>([
@@ -22,6 +23,7 @@ const ALLOWED_FIELDS = new Set<ContactEditableField>([
   "is_predicted_origin_blacklisted",
   "is_contact_location_blacklisted",
   "added_to_meetalfred_campaign",
+  "not_a_lead",
 ]);
 
 async function readRawBody(req: IncomingMessage): Promise<string> {

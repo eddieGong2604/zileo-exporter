@@ -66,18 +66,18 @@ export default async function handler(
       .filter((c) => Number.isFinite(c.contactId) && c.contactId > 0 && c.linkedinUrl);
 
     if (mapped.length === 0) {
-      sendJson(res, 200, { requested: 0, matchedWithEmail: 0, updated: 0 });
+      sendJson(res, 200, { requested: 0, matchedWithEmail: 0, updated: 0, updates: [] });
       return;
     }
 
     const found = await bulkRevealEmailsWithApollo({ apiKey, people: mapped });
-    const updated = await updateContactEmails(
-      found.map((f) => ({ id: f.contactId, email: f.email })),
-    );
+    const updates = found.map((f) => ({ id: f.contactId, email: f.email }));
+    const updated = await updateContactEmails(updates);
     sendJson(res, 200, {
       requested: mapped.length,
       matchedWithEmail: found.length,
       updated,
+      updates,
     });
   } catch (error) {
     const message =

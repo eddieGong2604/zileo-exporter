@@ -7,7 +7,8 @@ export type EditableContactField =
   | "predicted_origin_of_name"
   | "is_predicted_origin_blacklisted"
   | "is_contact_location_blacklisted"
-  | "added_to_meetalfred_campaign";
+  | "added_to_meetalfred_campaign"
+  | "not_a_lead";
 
 export async function updateContactField(input: {
   id: number;
