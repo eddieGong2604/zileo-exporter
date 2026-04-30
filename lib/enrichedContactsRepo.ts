@@ -371,12 +371,39 @@ export async function updateContactEditableField(
   if (!sqlField) return false;
   const client = await getPool(connectionStringOverride).connect();
   try {
-    const res = await client.query(
-      `UPDATE contacts
-       SET ${sqlField} = $2, updated_at = NOW()
-       WHERE id = $1`,
-      [input.id, input.value],
-    );
+    let res;
+    if (input.field === "first_name") {
+      const firstName = String(input.value ?? "").trim();
+      res = await client.query(
+        `UPDATE contacts
+         SET first_name = $2,
+             contact_name = CASE
+               WHEN COALESCE(BTRIM(contact_name), '') = '' THEN
+                 CASE
+                   WHEN $2 = '' THEN contact_name
+                   ELSE $2
+                 END
+               ELSE
+                 CASE
+                   WHEN $2 = '' THEN BTRIM(REGEXP_REPLACE(BTRIM(contact_name), '^[^\\s]+\\s*', ''))
+                   ELSE $2 || CASE
+                     WHEN BTRIM(REGEXP_REPLACE(BTRIM(contact_name), '^[^\\s]+\\s*', '')) = '' THEN ''
+                     ELSE ' ' || BTRIM(REGEXP_REPLACE(BTRIM(contact_name), '^[^\\s]+\\s*', ''))
+                   END
+                 END
+             END,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [input.id, firstName],
+      );
+    } else {
+      res = await client.query(
+        `UPDATE contacts
+         SET ${sqlField} = $2, updated_at = NOW()
+         WHERE id = $1`,
+        [input.id, input.value],
+      );
+    }
     return (res.rowCount ?? 0) > 0;
   } catch (error) {
     log.error("updateContactEditableField failed", {
