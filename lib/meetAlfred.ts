@@ -48,6 +48,7 @@ export async function listMeetAlfredCampaigns(): Promise<MeetAlfredCampaign[]> {
       const parsed = JSON.parse(text) as CampaignResponse;
       const campaigns = Array.isArray(parsed.campaigns) ? parsed.campaigns : [];
       return campaigns
+        .filter((c) => String(c.status ?? "").trim().toLowerCase() === "active")
         .filter((c): c is Required<Pick<MeetAlfredCampaign, "id" | "label">> &
           Omit<MeetAlfredCampaign, "webhookKey"> => {
           return typeof c.id === "number" && typeof c.label === "string";

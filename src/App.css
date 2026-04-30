@@ -312,6 +312,61 @@ tr:last-child td {
   cursor: default;
 }
 
+.all-jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.all-jobs-label {
+  border: none;
+  background: transparent;
+  color: #1d4ed8;
+  text-decoration: underline;
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.all-jobs-label:hover {
+  color: #1e40af;
+}
+
+.job-detail-modal {
+  width: min(860px, 100%);
+}
+
+.job-detail-source {
+  margin: 0;
+  color: #475569;
+  font-size: 0.82rem;
+}
+
+.job-detail-markdown {
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: #0f172a;
+  max-height: min(58vh, 560px);
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.job-detail-markdown p,
+.job-detail-markdown ul,
+.job-detail-markdown ol,
+.job-detail-markdown h1,
+.job-detail-markdown h2,
+.job-detail-markdown h3,
+.job-detail-markdown h4 {
+  margin: 0 0 0.7rem;
+}
+
+.job-detail-markdown ul,
+.job-detail-markdown ol {
+  padding-left: 1.25rem;
+}
+
 .mono {
   font-family: ui-monospace, monospace;
   font-size: 0.8rem;
@@ -619,6 +674,9 @@ tr:last-child td {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  max-height: min(62vh, 640px);
+  overflow-y: auto;
+  padding-right: 0.35rem;
 }
 
 .filter-fieldset {

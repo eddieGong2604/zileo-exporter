@@ -14,6 +14,8 @@ export type EnrichedContact = {
   isPredictedOriginBlacklisted: boolean | null;
   isContactLocationBlacklisted: boolean | null;
   addedToMeetAlfredCampaign: boolean | null;
+  addedToMeetAlfredAt: string | null;
+  addedToInstantlyAt: string | null;
   notALead: boolean | null;
   createdAt: string;
   updatedAt: string;

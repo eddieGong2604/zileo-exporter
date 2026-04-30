@@ -7,6 +7,7 @@ import { revealCompanyWithOpenAI } from "./lib/revealCompanyOpenAI";
 import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
 import {
   listEnrichedContacts,
+  markContactsAddedToInstantly,
   markContactsAddedToMeetAlfred,
   rejectCompany,
   updateContactEditableField,
@@ -18,6 +19,7 @@ import {
   listMeetAlfredCampaigns,
 } from "./lib/meetAlfred.js";
 import { bulkRevealEmailsWithApollo } from "./lib/apolloBulkMatch.js";
+import { addLeadsToInstantlyCampaign, listInstantlyCampaigns } from "./lib/instantly.js";
 
 const devRevealLog = createLogger("vite/reveal-dev-api");
 
@@ -317,9 +319,13 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     firstName?: string;
                     contactName?: string;
                     companyName?: string;
+                    email?: string;
                   }>;
                 };
                 const contacts = Array.isArray(body.contacts) ? body.contacts : [];
+                devRevealLog.info("apollo bulk reveal request", {
+                  requestedRaw: contacts.length,
+                });
                 const mapped = contacts
                   .map((c) => {
                     const fullName = (c.contactName ?? "").trim();
@@ -329,6 +335,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     return {
                       contactId: Number(c.id),
                       linkedinUrl: (c.linkedinUrl ?? "").trim(),
+                      email: (c.email ?? "").trim(),
                       firstName: (c.firstName ?? "").trim() || firstFromName || undefined,
                       lastName: rest.length > 0 ? rest.join(" ") : undefined,
                       name: fullName || undefined,
@@ -337,8 +344,16 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                   })
                   .filter(
                     (c) =>
-                      Number.isFinite(c.contactId) && c.contactId > 0 && c.linkedinUrl.length > 0,
+                      Number.isFinite(c.contactId) &&
+                      c.contactId > 0 &&
+                      c.linkedinUrl.length > 0 &&
+                      c.email.length === 0,
                   );
+                devRevealLog.info("apollo bulk reveal prefilter", {
+                  requestedRaw: contacts.length,
+                  eligibleForApollo: mapped.length,
+                  skipped: contacts.length - mapped.length,
+                });
                 const found = await bulkRevealEmailsWithApollo({
                   apiKey,
                   people: mapped,
@@ -348,6 +363,11 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                   updates,
                   env.POSTGRES_URL || env.DATABASE_URL,
                 );
+                devRevealLog.info("apollo bulk reveal completed", {
+                  requested: mapped.length,
+                  matchedWithEmail: found.length,
+                  updated,
+                });
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json; charset=utf-8");
                 res.end(
@@ -389,6 +409,10 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     | "queued"
                     | "rejected",
                   meetAlfredAdded: (url.searchParams.get("meetAlfredAdded") ?? "all") as
+                    | "all"
+                    | "added"
+                    | "not_added",
+                  instantlyAdded: (url.searchParams.get("instantlyAdded") ?? "not_added") as
                     | "all"
                     | "added"
                     | "not_added",
@@ -523,6 +547,120 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
               } catch (e) {
                 const msg =
                   e instanceof Error ? e.message : "Failed to send Meet Alfred leads";
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ error: msg }));
+              }
+            })();
+          });
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "GET" || pathname !== "/api/instantly-campaigns") {
+            next();
+            return;
+          }
+          void (async () => {
+            try {
+              const apiKey = env.INSTANTLY_API_KEY;
+              if (!apiKey) {
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ error: "Missing INSTANTLY_API_KEY on server" }));
+                return;
+              }
+              const campaigns = await listInstantlyCampaigns({ apiKey });
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ campaigns }));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : "Failed to load Instantly campaigns";
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ error: msg }));
+            }
+          })();
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "POST" || pathname !== "/api/instantly-bulk-send") {
+            next();
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          req.on("end", () => {
+            void (async () => {
+              try {
+                const apiKey = env.INSTANTLY_API_KEY;
+                if (!apiKey) {
+                  res.statusCode = 500;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(JSON.stringify({ error: "Missing INSTANTLY_API_KEY on server" }));
+                  return;
+                }
+                const raw = Buffer.concat(chunks).toString("utf8");
+                const body = JSON.parse(raw) as {
+                  campaignId?: string;
+                  leads?: Array<{
+                    contactId?: number;
+                    email?: string;
+                    first_name?: string;
+                    company_name?: string;
+                  }>;
+                };
+                const campaignId = (body.campaignId ?? "").trim();
+                if (!campaignId) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(JSON.stringify({ error: "campaignId is required" }));
+                  return;
+                }
+                const leads = (Array.isArray(body.leads) ? body.leads : [])
+                  .map((lead) => ({
+                    contactId: Number(lead.contactId),
+                    email: (lead.email ?? "").trim(),
+                    first_name: (lead.first_name ?? "").trim(),
+                    company_name: (lead.company_name ?? "").trim(),
+                  }))
+                  .filter((lead) => lead.email.length > 0);
+                const result = await addLeadsToInstantlyCampaign({
+                  apiKey,
+                  campaignId,
+                  leads: leads.map((lead) => ({
+                    email: lead.email,
+                    first_name: lead.first_name,
+                    company_name: lead.company_name,
+                  })),
+                });
+                const byEmail = new Map<string, number>();
+                for (const lead of leads) {
+                  const email = lead.email.trim().toLowerCase();
+                  if (email && Number.isFinite(lead.contactId) && lead.contactId > 0) {
+                    byEmail.set(email, lead.contactId);
+                  }
+                }
+                const successfulIds = result.createdLeadEmails
+                  .map((email) => byEmail.get(email))
+                  .filter(
+                    (id): id is number =>
+                      typeof id === "number" && Number.isFinite(id) && id > 0,
+                  );
+                const markedInstantly = await markContactsAddedToInstantly(
+                  successfulIds,
+                  env.POSTGRES_URL || env.DATABASE_URL,
+                );
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ ...result, markedInstantly }));
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : "Failed to send Instantly leads";
                 res.statusCode = 500;
                 res.setHeader("Content-Type", "application/json; charset=utf-8");
                 res.end(JSON.stringify({ error: msg }));

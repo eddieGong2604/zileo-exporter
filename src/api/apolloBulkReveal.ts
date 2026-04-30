@@ -5,6 +5,7 @@ export async function bulkRevealEmails(input: {
     firstName: string;
     contactName: string;
     companyName: string;
+    email?: string;
   }>;
 }): Promise<{
   requested: number;

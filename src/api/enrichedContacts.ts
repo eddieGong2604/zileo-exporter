@@ -13,6 +13,7 @@ type EnrichedContactsResponse = {
 export type FetchEnrichedContactsInput = {
   status: "all" | "approved" | "queued" | "rejected";
   meetAlfredAdded: "all" | "added" | "not_added";
+  instantlyAdded: "all" | "added" | "not_added";
   excludeOriginBlacklisted: boolean;
   excludeLocationBlacklisted: boolean;
   excludeNotALead: boolean;
@@ -28,6 +29,7 @@ export async function fetchEnrichedContacts(
   const params = new URLSearchParams();
   params.set("status", input.status);
   params.set("meetAlfredAdded", input.meetAlfredAdded);
+  params.set("instantlyAdded", input.instantlyAdded);
   params.set("excludeOriginBlacklisted", String(input.excludeOriginBlacklisted));
   params.set("excludeLocationBlacklisted", String(input.excludeLocationBlacklisted));
   params.set("excludeNotALead", String(input.excludeNotALead));

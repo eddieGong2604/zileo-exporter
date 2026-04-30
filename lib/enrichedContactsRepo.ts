@@ -19,6 +19,8 @@ export type EnrichedContact = {
   isPredictedOriginBlacklisted: boolean | null;
   isContactLocationBlacklisted: boolean | null;
   addedToMeetAlfredCampaign: boolean | null;
+  addedToMeetAlfredAt: string | null;
+  addedToInstantlyAt: string | null;
   notALead: boolean | null;
   createdAt: string;
   updatedAt: string;
@@ -29,6 +31,7 @@ export type LatestJobPostedFilter = "24h" | "3d" | "1w" | "all";
 export type EnrichedServerFilters = {
   status?: "all" | "approved" | "queued" | "rejected";
   meetAlfredAdded?: "all" | "added" | "not_added";
+  instantlyAdded?: "all" | "added" | "not_added";
   excludeOriginBlacklisted?: boolean;
   excludeLocationBlacklisted?: boolean;
   excludeNotALead?: boolean;
@@ -92,6 +95,10 @@ export async function listEnrichedContacts(
     if (ma === "added") where.push(`ct.added_to_meetalfred_campaign IS TRUE`);
     if (ma === "not_added")
       where.push(`COALESCE(ct.added_to_meetalfred_campaign, FALSE) IS FALSE`);
+
+    const instantlyAdded = (filters?.instantlyAdded ?? "not_added").toLowerCase();
+    if (instantlyAdded === "added") where.push(`ct.added_to_instantly_at IS NOT NULL`);
+    if (instantlyAdded === "not_added") where.push(`ct.added_to_instantly_at IS NULL`);
 
     const excludeOrigin = filters?.excludeOriginBlacklisted ?? true;
     if (excludeOrigin)
@@ -171,6 +178,8 @@ export async function listEnrichedContacts(
             ct.is_predicted_origin_blacklisted AS "isPredictedOriginBlacklisted",
             ct.is_contact_location_blacklisted AS "isContactLocationBlacklisted",
             ct.added_to_meetalfred_campaign AS "addedToMeetAlfredCampaign",
+            ct.added_to_meet_alfred_at AS "addedToMeetAlfredAt",
+            ct.added_to_instantly_at AS "addedToInstantlyAt",
             ct.not_a_lead AS "notALead",
             ct.created_at AS "createdAt",
             ct.updated_at AS "updatedAt",
@@ -260,13 +269,41 @@ export async function markContactsAddedToMeetAlfred(
   try {
     const res = await client.query(
       `UPDATE contacts
-       SET added_to_meetalfred_campaign = TRUE, updated_at = NOW()
+       SET added_to_meetalfred_campaign = TRUE,
+           added_to_meet_alfred_at = NOW(),
+           updated_at = NOW()
        WHERE id = ANY($1::int[])`,
       [ids],
     );
     return res.rowCount ?? 0;
   } catch (error) {
     log.error("markContactsAddedToMeetAlfred failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function markContactsAddedToInstantly(
+  contactIds: number[],
+  connectionStringOverride?: string,
+): Promise<number> {
+  const ids = Array.from(new Set(contactIds.filter((id) => Number.isFinite(id) && id > 0)));
+  if (ids.length === 0) return 0;
+  const client = await getPool(connectionStringOverride).connect();
+  try {
+    const res = await client.query(
+      `UPDATE contacts
+       SET added_to_instantly_at = NOW(),
+           updated_at = NOW()
+       WHERE id = ANY($1::int[])`,
+      [ids],
+    );
+    return res.rowCount ?? 0;
+  } catch (error) {
+    log.error("markContactsAddedToInstantly failed", {
       message: error instanceof Error ? error.message : String(error),
     });
     throw error;

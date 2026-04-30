@@ -34,6 +34,10 @@ export default async function handler(
         | "all"
         | "added"
         | "not_added",
+      instantlyAdded: (url.searchParams.get("instantlyAdded") ?? "not_added") as
+        | "all"
+        | "added"
+        | "not_added",
       excludeOriginBlacklisted: url.searchParams.get("excludeOriginBlacklisted") !== "false",
       excludeLocationBlacklisted:
         url.searchParams.get("excludeLocationBlacklisted") !== "false",

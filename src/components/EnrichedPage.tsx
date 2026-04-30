@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dayjs from "dayjs";
+import { marked } from "marked";
 import { bulkRevealEmails } from "../api/apolloBulkReveal";
 import { rejectCompany as rejectCompanyApi } from "../api/companyReject";
 import {
@@ -7,6 +8,7 @@ import {
   type EditableContactField,
 } from "../api/contactUpdateField";
 import { fetchEnrichedContacts } from "../api/enrichedContacts";
+import { bulkSendInstantly, fetchInstantlyCampaigns } from "../api/instantly";
 import { bulkSendMeetAlfred, fetchMeetAlfredCampaigns } from "../api/meetAlfred";
 import type { EnrichedContact } from "../types/enriched";
 
@@ -19,6 +21,7 @@ type SortDirection = "asc" | "desc";
 type SortState = { key: string; direction: SortDirection } | null;
 type CompanyStatusFilter = "all" | "approved" | "queued" | "rejected";
 type MeetAlfredAddedFilter = "all" | "added" | "not_added";
+type InstantlyAddedFilter = "all" | "added" | "not_added";
 type LatestJobPostedFilter = "24h" | "3d" | "1w" | "all";
 type MeetAlfredCampaign = {
   id: number;
@@ -26,10 +29,33 @@ type MeetAlfredCampaign = {
   status?: string;
   webhookKey: string;
 };
+type InstantlyCampaign = {
+  id: string;
+  name: string;
+  status?: number;
+};
 type EditableColumnConfig = {
   field: EditableContactField;
   valueKey: keyof EnrichedContact;
   kind: "text" | "boolean";
+};
+type CompanyJobItem = {
+  id?: string;
+  source?: string;
+  jobtitle?: string;
+  description?: string;
+};
+type JobDetailPayload = {
+  title: string;
+  source: string;
+  description: string;
+};
+
+const JOB_DETAIL_EVENT = "enriched:open-job-detail";
+
+const DEFAULT_SORT_STATE: SortState = {
+  key: "company.source_latest_job_posted_at",
+  direction: "desc",
 };
 
 const LS_KEYS = {
@@ -39,6 +65,7 @@ const LS_KEYS = {
   excludeLocationBlacklist: "enriched.excludeLocationBlacklist",
   excludeNotALead: "enriched.excludeNotALead",
   meetAlfredAddedFilter: "enriched.meetAlfredAddedFilter",
+  instantlyAddedFilter: "enriched.instantlyAddedFilter",
   sourceCountries: "enriched.sourceCountries",
   latestJobPosted: "enriched.latestJobPosted",
   visibleColumns: "enriched.visibleColumns",
@@ -57,6 +84,7 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
   "company.source_company_name",
   "company.company_description",
   "company.source_latest_job_posted_at",
+  "company.all_jobs",
   "company.status",
   "company.rejection_reason",
   "contact.first_name",
@@ -67,7 +95,8 @@ const DEFAULT_VISIBLE_COLUMN_KEYS = new Set<string>([
   "contact.predicted_origin_of_name",
   "contact.is_predicted_origin_blacklisted",
   "contact.is_contact_location_blacklisted",
-  "contact.added_to_meetalfred_campaign",
+  "contact.added_to_meet_alfred_at",
+  "contact.added_to_instantly_at",
   "contact.not_a_lead",
 ]);
 
@@ -113,9 +142,14 @@ const CONTACT_COLUMN_DEFS: ColumnDef[] = [
     getValue: (row) => row.isContactLocationBlacklisted,
   },
   {
-    key: "contact.added_to_meetalfred_campaign",
-    label: "In MA",
-    getValue: (row) => row.addedToMeetAlfredCampaign,
+    key: "contact.added_to_meet_alfred_at",
+    label: "Added To MA At",
+    getValue: (row) => row.addedToMeetAlfredAt,
+  },
+  {
+    key: "contact.added_to_instantly_at",
+    label: "Added To Instantly At",
+    getValue: (row) => row.addedToInstantlyAt,
   },
   {
     key: "contact.not_a_lead",
@@ -155,11 +189,6 @@ const EDITABLE_COLUMN_CONFIG: Partial<Record<string, EditableColumnConfig>> = {
   "contact.is_contact_location_blacklisted": {
     field: "is_contact_location_blacklisted",
     valueKey: "isContactLocationBlacklisted",
-    kind: "boolean",
-  },
-  "contact.added_to_meetalfred_campaign": {
-    field: "added_to_meetalfred_campaign",
-    valueKey: "addedToMeetAlfredCampaign",
     kind: "boolean",
   },
   "contact.not_a_lead": {
@@ -235,6 +264,95 @@ function truncateWords(input: string, maxWords: number): string {
   const words = input.trim().split(/\s+/).filter(Boolean);
   if (words.length <= maxWords) return words.join(" ");
   return `${words.slice(0, maxWords).join(" ")}...`;
+}
+
+function companyAllJobs(value: unknown): CompanyJobItem[] {
+  if (Array.isArray(value)) return value.filter((v) => typeof v === "object") as CompanyJobItem[];
+  if (typeof value !== "string") return [];
+  const text = value.trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v) => typeof v === "object") as CompanyJobItem[];
+  } catch {
+    return [];
+  }
+}
+
+function JobDetailModalHost() {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<JobDetailPayload | null>(null);
+  const [html, setHtml] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const payload = (event as CustomEvent<JobDetailPayload>).detail;
+      if (!payload) return;
+      setDetail(payload);
+      setHtml("");
+      setOpen(true);
+    };
+    window.addEventListener(JOB_DETAIL_EVENT, handler as EventListener);
+    return () => window.removeEventListener(JOB_DETAIL_EVENT, handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !detail) {
+      setHtml("");
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const parsed = await Promise.resolve(marked.parse(detail.description || "_No description_"));
+        if (cancelled) return;
+        setHtml(String(parsed));
+        setLoading(false);
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, detail]);
+
+  if (!open || !detail) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={() => setOpen(false)}>
+      <div className="modal filter-modal job-detail-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>{detail.title}</h2>
+          <button type="button" className="modal-close" onClick={() => setOpen(false)}>
+            ×
+          </button>
+        </div>
+        <div className="filter-modal-body">
+          {detail.source && (
+            <p className="job-detail-source">
+              Source: <strong>{detail.source}</strong>
+            </p>
+          )}
+          <div className="job-detail-markdown">
+            {loading ? (
+              <p>Rendering description...</p>
+            ) : (
+              <div dangerouslySetInnerHTML={{ __html: html || "<p><em>No description</em></p>" }} />
+            )}
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn-secondary" onClick={() => setOpen(false)}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function companyNameFromRecord(company: Record<string, unknown> | null): string {
@@ -340,6 +458,7 @@ function selectionKeyForRow(row: EnrichedContact): string {
 function filterSummary(
   status: CompanyStatusFilter,
   meetAlfredAddedFilter: MeetAlfredAddedFilter,
+  instantlyAddedFilter: InstantlyAddedFilter,
   excludeOriginBlacklist: boolean,
   excludeLocationBlacklist: boolean,
   excludeNotALead: boolean,
@@ -355,6 +474,13 @@ function filterSummary(
       : meetAlfredAddedFilter === "added"
         ? "Meet Alfred: added only"
         : "Meet Alfred: not added only",
+  );
+  parts.push(
+    instantlyAddedFilter === "all"
+      ? "Instantly: all"
+      : instantlyAddedFilter === "added"
+        ? "Instantly: added only"
+        : "Instantly: not added only",
   );
   parts.push(
     excludeOriginBlacklist ? "Origin not blacklisted" : "Any origin blacklist",
@@ -470,8 +596,10 @@ export function EnrichedPage() {
   });
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<Set<string>>(new Set());
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
-  const [sortState, setSortState] = useState<SortState>(null);
+  const [sortState, setSortState] = useState<SortState>(DEFAULT_SORT_STATE);
   const [columnConfigOpen, setColumnConfigOpen] = useState(false);
+  const [columnDraftOrder, setColumnDraftOrder] = useState<string[]>([]);
+  const [columnDraftVisibleKeys, setColumnDraftVisibleKeys] = useState<Set<string>>(new Set());
   const [initializedVisibleColumns, setInitializedVisibleColumns] = useState(false);
   const [statusFilter, setStatusFilter] = useState<CompanyStatusFilter>(() => {
     const raw = safeReadLocalStorage(LS_KEYS.statusFilter);
@@ -487,6 +615,11 @@ export function EnrichedPage() {
       return "all";
     },
   );
+  const [instantlyAddedFilter, setInstantlyAddedFilter] = useState<InstantlyAddedFilter>(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.instantlyAddedFilter);
+    if (raw === "all" || raw === "added" || raw === "not_added") return raw;
+    return "not_added";
+  });
   const [excludePredictedOriginBlacklist, setExcludePredictedOriginBlacklist] = useState(() => {
     const raw = safeReadLocalStorage(LS_KEYS.excludeOriginBlacklist);
     if (raw === "false") return false;
@@ -542,22 +675,23 @@ export function EnrichedPage() {
   const [selectedCampaignComposite, setSelectedCampaignComposite] = useState("");
   const [sendingToMeetAlfred, setSendingToMeetAlfred] = useState(false);
   const [sendResultMessage, setSendResultMessage] = useState<string | null>(null);
+  const [instantlyModalOpen, setInstantlyModalOpen] = useState(false);
+  const [instantlyCampaignsLoading, setInstantlyCampaignsLoading] = useState(false);
+  const [instantlyCampaignsError, setInstantlyCampaignsError] = useState<string | null>(null);
+  const [instantlyCampaigns, setInstantlyCampaigns] = useState<InstantlyCampaign[]>([]);
+  const [selectedInstantlyCampaignId, setSelectedInstantlyCampaignId] = useState("");
+  const [sendingToInstantly, setSendingToInstantly] = useState(false);
+  const [instantlySendResultMessage, setInstantlySendResultMessage] = useState<string | null>(null);
   const [revealingEmails, setRevealingEmails] = useState(false);
   const [revealResultMessage, setRevealResultMessage] = useState<string | null>(null);
   const [revealingEmailRowKeys, setRevealingEmailRowKeys] = useState<Set<string>>(new Set());
-  const [editTextDraftByCellKey, setEditTextDraftByCellKey] = useState<Record<string, string>>(
-    {},
-  );
-  const [editBooleanDraftByCellKey, setEditBooleanDraftByCellKey] = useState<
-    Record<string, boolean>
-  >({});
   const [savingCellKeys, setSavingCellKeys] = useState<Set<string>>(new Set());
   const [rejectOpenCompanyId, setRejectOpenCompanyId] = useState<number | null>(null);
-  const [rejectReasonByCompanyId, setRejectReasonByCompanyId] = useState<
-    Record<number, string>
-  >({});
   const [rejectingCompanyId, setRejectingCompanyId] = useState<number | null>(null);
   const [draggingColumnKey, setDraggingColumnKey] = useState<string | null>(null);
+  const rejectReasonInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const editTextInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const editBooleanInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const loadRows = async () => {
     setLoading(true);
@@ -566,6 +700,7 @@ export function EnrichedPage() {
       const body = await fetchEnrichedContacts({
         status: statusFilter,
         meetAlfredAdded: meetAlfredAddedFilter,
+        instantlyAdded: instantlyAddedFilter,
         excludeOriginBlacklisted: excludePredictedOriginBlacklist,
         excludeLocationBlacklisted: excludeContactLocationBlacklist,
         excludeNotALead,
@@ -589,6 +724,7 @@ export function EnrichedPage() {
   }, [
     statusFilter,
     meetAlfredAddedFilter,
+    instantlyAddedFilter,
     excludePredictedOriginBlacklist,
     excludeContactLocationBlacklist,
     excludeNotALead,
@@ -673,6 +809,10 @@ export function EnrichedPage() {
   }, [meetAlfredAddedFilter]);
 
   useEffect(() => {
+    safeWriteLocalStorage(LS_KEYS.instantlyAddedFilter, instantlyAddedFilter);
+  }, [instantlyAddedFilter]);
+
+  useEffect(() => {
     safeWriteLocalStorage(
       LS_KEYS.excludeOriginBlacklist,
       String(excludePredictedOriginBlacklist),
@@ -706,6 +846,7 @@ export function EnrichedPage() {
   }, [
     statusFilter,
     meetAlfredAddedFilter,
+    instantlyAddedFilter,
     excludePredictedOriginBlacklist,
     excludeContactLocationBlacklist,
     excludeNotALead,
@@ -752,9 +893,21 @@ export function EnrichedPage() {
     return sorted;
   }, [orderedColumns, filteredRows, sortState]);
 
-  const moveColumnBefore = (dragKey: string, targetKey: string) => {
+  const openColumnConfigModal = () => {
+    setColumnDraftOrder([...columnOrder]);
+    setColumnDraftVisibleKeys(new Set(visibleColumnKeys));
+    setColumnConfigOpen(true);
+  };
+
+  const applyColumnConfig = () => {
+    setColumnOrder([...columnDraftOrder]);
+    setVisibleColumnKeys(new Set(columnDraftVisibleKeys));
+    setColumnConfigOpen(false);
+  };
+
+  const moveDraftColumnBefore = (dragKey: string, targetKey: string) => {
     if (!dragKey || dragKey === targetKey) return;
-    setColumnOrder((prev) => {
+    setColumnDraftOrder((prev) => {
       const base = prev.length > 0 ? prev : orderedColumns.map((c) => c.key);
       const withoutDrag = base.filter((k) => k !== dragKey);
       const targetIdx = withoutDrag.indexOf(targetKey);
@@ -859,14 +1012,17 @@ export function EnrichedPage() {
   const openMeetAlfredModal = async () => {
     setMeetAlfredModalOpen(true);
     setSendResultMessage(null);
-    if (campaigns.length > 0) return;
     setCampaignsLoading(true);
     setCampaignsError(null);
     try {
-      const list = await fetchMeetAlfredCampaigns();
+      const list = (await fetchMeetAlfredCampaigns()).filter(
+        (campaign) => (campaign.status ?? "").trim().toLowerCase() === "active",
+      );
       setCampaigns(list);
       if (list.length > 0) {
         setSelectedCampaignComposite(`${list[0].webhookKey}::${list[0].id}`);
+      } else {
+        setSelectedCampaignComposite("");
       }
     } catch (e) {
       setCampaignsError(e instanceof Error ? e.message : "Failed to load campaigns");
@@ -911,21 +1067,101 @@ export function EnrichedPage() {
     }
   };
 
+  const openInstantlyModal = async () => {
+    setInstantlyModalOpen(true);
+    setInstantlyCampaignsError(null);
+    setInstantlySendResultMessage(null);
+    if (instantlyCampaigns.length > 0) return;
+    setInstantlyCampaignsLoading(true);
+    try {
+      const list = await fetchInstantlyCampaigns();
+      setInstantlyCampaigns(list);
+      if (list.length > 0) {
+        setSelectedInstantlyCampaignId(list[0].id);
+      }
+    } catch (e) {
+      setInstantlyCampaignsError(
+        e instanceof Error ? e.message : "Failed to load Instantly campaigns",
+      );
+    } finally {
+      setInstantlyCampaignsLoading(false);
+    }
+  };
+
+  const sendSelectedToInstantly = async () => {
+    const selectedRows = selectedRowsForActions;
+    if (selectedRows.length === 0) return;
+    const eligibleRows = selectedRows.filter((row) => (row.email ?? "").trim().length > 0);
+    const skippedWithoutEmail = selectedRows.length - eligibleRows.length;
+    if (eligibleRows.length === 0) {
+      setInstantlyCampaignsError("No selected leads have email.");
+      setInstantlySendResultMessage(`Skipped ${skippedWithoutEmail} leads without email.`);
+      return;
+    }
+    const campaignId = selectedInstantlyCampaignId.trim();
+    if (!campaignId) {
+      setInstantlyCampaignsError("Please select a campaign");
+      return;
+    }
+    setSendingToInstantly(true);
+    setInstantlyCampaignsError(null);
+    setInstantlySendResultMessage(null);
+    try {
+      const result = await bulkSendInstantly({
+        campaignId,
+        leads: eligibleRows.map((row) => ({
+          contactId: Number(row.id ?? 0),
+          email: (row.email ?? "").trim(),
+          first_name: firstNameFromRow(row),
+          company_name: companyNameFromRow(row),
+        })),
+      });
+      if (result.markedInstantly > 0) {
+        const nowIso = new Date().toISOString();
+        setRows((prev) =>
+          prev.map((row) =>
+            eligibleRows.some((lead) => Number(lead.id ?? 0) === Number(row.id ?? 0))
+              ? { ...row, addedToInstantlyAt: nowIso }
+              : row,
+          ),
+        );
+      }
+      setInstantlySendResultMessage(
+        `Uploaded ${result.leadsUploaded}/${result.attempted}. Sent: ${result.totalSent}, skipped by Instantly: ${result.skippedCount}, skipped missing email: ${skippedWithoutEmail}, invalid: ${result.invalidEmailCount}, marked: ${result.markedInstantly}.`,
+      );
+    } catch (e) {
+      setInstantlyCampaignsError(e instanceof Error ? e.message : "Failed to send Instantly leads");
+    } finally {
+      setSendingToInstantly(false);
+    }
+  };
+
   const revealEmailsForSelectedRows = async () => {
     const selectedRows = selectedRowsForActions;
     if (!selectedRows.length) return;
+    const revealable = selectedRows.filter((row) => {
+      const id = Number(row.id ?? 0);
+      const linkedinUrl = (row.contactLinkedin ?? "").trim();
+      const email = (row.email ?? "").trim();
+      return id > 0 && linkedinUrl.length > 0 && email.length === 0;
+    });
+    if (revealable.length === 0) {
+      setRevealResultMessage("All selected rows already have email or missing LinkedIn.");
+      return;
+    }
     setRevealingEmails(true);
     setRevealResultMessage(null);
     setError(null);
     try {
       const result = await bulkRevealEmails({
-        contacts: selectedRows
+        contacts: revealable
           .map((row) => ({
             id: Number(row.id ?? 0),
             linkedinUrl: (row.contactLinkedin ?? "").trim(),
             firstName: (row.firstName ?? "").trim(),
             contactName: (row.contactName ?? "").trim(),
             companyName: companyNameFromRow(row),
+            email: (row.email ?? "").trim(),
           }))
           .filter((c) => c.id > 0 && c.linkedinUrl.length > 0),
       });
@@ -953,7 +1189,8 @@ export function EnrichedPage() {
     const rowKey = selectionKeyForRow(row);
     const id = Number(row.id ?? 0);
     const linkedinUrl = (row.contactLinkedin ?? "").trim();
-    if (id <= 0 || !linkedinUrl) return;
+    const email = (row.email ?? "").trim();
+    if (id <= 0 || !linkedinUrl || email.length > 0) return;
     setRevealingEmailRowKeys((prev) => {
       const next = new Set(prev);
       next.add(rowKey);
@@ -969,6 +1206,7 @@ export function EnrichedPage() {
             firstName: (row.firstName ?? "").trim(),
             contactName: (row.contactName ?? "").trim(),
             companyName: companyNameFromRow(row),
+            email: (row.email ?? "").trim(),
           },
         ],
       });
@@ -989,8 +1227,11 @@ export function EnrichedPage() {
     }
   };
 
-  const submitRejectCompany = async (companyId: number) => {
-    const reason = (rejectReasonByCompanyId[companyId] ?? "").trim();
+  const submitRejectCompany = async (companyId: number, reasonInput?: string) => {
+    const reason =
+      typeof reasonInput === "string"
+        ? reasonInput.trim()
+        : (rejectReasonInputRefs.current[companyId]?.value ?? "").trim();
     if (!reason) {
       setError("Please enter a rejection reason");
       return;
@@ -1000,7 +1241,18 @@ export function EnrichedPage() {
     try {
       await rejectCompanyApi({ companyId, rejectionReason: reason });
       setRejectOpenCompanyId(null);
-      await loadRows();
+      setRows((prev) => {
+        const next = prev.filter((row) => {
+          const rowCompanyId = row.company?.id ?? row.companyId;
+          return rowCompanyId !== companyId;
+        });
+        const removedCount = prev.length - next.length;
+        if (removedCount > 0) {
+          setTotalContacts((current) => Math.max(0, current - removedCount));
+          setTotalCompanies((current) => Math.max(0, current - 1));
+        }
+        return next;
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to reject company");
     } finally {
@@ -1018,8 +1270,10 @@ export function EnrichedPage() {
     const sourceRaw = row[config.valueKey];
     const sourceText = typeof sourceRaw === "string" ? sourceRaw.trim() : "";
     const sourceBool = sourceRaw === true;
-    const draftText = (editTextDraftByCellKey[cellKey] ?? sourceText).trim();
-    const draftBool = editBooleanDraftByCellKey[cellKey] ?? sourceBool;
+    const textInput = editTextInputRefs.current[cellKey];
+    const boolInput = editBooleanInputRefs.current[cellKey];
+    const draftText = (textInput?.value ?? sourceText).trim();
+    const draftBool = boolInput?.checked ?? sourceBool;
     const draftValue = config.kind === "boolean" ? draftBool : draftText;
     const sourceValue = config.kind === "boolean" ? sourceBool : sourceText;
     if (draftValue === sourceValue) return;
@@ -1048,16 +1302,6 @@ export function EnrichedPage() {
             : item,
         );
       });
-      setEditTextDraftByCellKey((prev) => {
-        const next = { ...prev };
-        delete next[cellKey];
-        return next;
-      });
-      setEditBooleanDraftByCellKey((prev) => {
-        const next = { ...prev };
-        delete next[cellKey];
-        return next;
-      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update contact field");
     } finally {
@@ -1070,6 +1314,36 @@ export function EnrichedPage() {
   };
 
   const renderCell = (row: EnrichedContact, column: ColumnDef) => {
+    if (column.key === "company.all_jobs") {
+      const jobs = companyAllJobs(column.getValue(row));
+      if (jobs.length === 0) return "—";
+      return (
+        <div className="all-jobs-list">
+          {jobs.map((job, idx) => {
+            const title = (job.jobtitle ?? "").trim() || `Job ${idx + 1}`;
+            const source = (job.source ?? "").trim();
+            const description = (job.description ?? "").trim();
+            return (
+              <button
+                key={`${job.id ?? "job"}-${idx}`}
+                type="button"
+                className="all-jobs-label"
+                onClick={() => {
+                  window.dispatchEvent(
+                    new CustomEvent<JobDetailPayload>(JOB_DETAIL_EVENT, {
+                      detail: { title, source, description },
+                    }),
+                  );
+                }}
+              >
+                {title}
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+
     if (column.key === "company.company_description") {
       const raw = column.getValue(row);
       const full = typeof raw === "string" ? raw.trim() : "";
@@ -1107,19 +1381,22 @@ export function EnrichedPage() {
       const revealing = revealingEmailRowKeys.has(rowKey);
       const id = Number(row.id ?? 0);
       const hasLinkedin = (row.contactLinkedin ?? "").trim().length > 0;
-      const canReveal = id > 0 && hasLinkedin && !revealing;
       const emailText = (row.email ?? "").trim();
+      const hasEmail = emailText.length > 0;
+      const canReveal = id > 0 && hasLinkedin && !revealing && !hasEmail;
       return (
         <div className="inline-edit-cell">
           <span>{emailText || "—"}</span>
-          <button
-            type="button"
-            className="inline-edit-save-btn"
-            disabled={!canReveal}
-            onClick={() => void revealEmailForRow(row)}
-          >
-            {revealing ? "..." : "Reveal"}
-          </button>
+          {!hasEmail && (
+            <button
+              type="button"
+              className="inline-edit-save-btn"
+              disabled={!canReveal}
+              onClick={() => void revealEmailForRow(row)}
+            >
+              {revealing ? "..." : "Reveal"}
+            </button>
+          )}
         </div>
       );
     }
@@ -1134,20 +1411,15 @@ export function EnrichedPage() {
     const sourceRaw = row[config.valueKey];
     const sourceText = typeof sourceRaw === "string" ? sourceRaw.trim() : "";
     const sourceBool = sourceRaw === true;
-    const draftText = editTextDraftByCellKey[cellKey] ?? sourceText;
-    const draftBool = editBooleanDraftByCellKey[cellKey] ?? sourceBool;
-    const dirty = config.kind === "boolean" ? draftBool !== sourceBool : draftText.trim() !== sourceText;
-    const canSave =
-      Number.isFinite(Number(row.id)) && Number(row.id) > 0 && dirty && !isSaving;
+    const canSave = Number.isFinite(Number(row.id)) && Number(row.id) > 0 && !isSaving;
     return (
       <div className="inline-edit-cell">
         {config.kind === "boolean" ? (
           <input
             type="checkbox"
-            checked={draftBool}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              setEditBooleanDraftByCellKey((prev) => ({ ...prev, [cellKey]: checked }));
+            defaultChecked={sourceBool}
+            ref={(el) => {
+              editBooleanInputRefs.current[cellKey] = el;
             }}
           />
         ) : (
@@ -1156,10 +1428,9 @@ export function EnrichedPage() {
               column.key === "contact.contact_linkedin" ? "inline-edit-input-linkedin" : ""
             }`}
             type="text"
-            value={draftText}
-            onChange={(e) => {
-              const value = e.target.value;
-              setEditTextDraftByCellKey((prev) => ({ ...prev, [cellKey]: value }));
+            defaultValue={sourceText}
+            ref={(el) => {
+              editTextInputRefs.current[cellKey] = el;
             }}
             placeholder={column.label}
           />
@@ -1209,6 +1480,7 @@ export function EnrichedPage() {
               {filterSummary(
                 statusFilter,
                 meetAlfredAddedFilter,
+                instantlyAddedFilter,
                 excludePredictedOriginBlacklist,
                 excludeContactLocationBlacklist,
                 excludeNotALead,
@@ -1220,7 +1492,7 @@ export function EnrichedPage() {
           <button
             type="button"
             className="column-btn"
-            onClick={() => setColumnConfigOpen(true)}
+            onClick={openColumnConfigModal}
           >
             Configure columns
           </button>
@@ -1241,6 +1513,7 @@ export function EnrichedPage() {
                 {filterSummary(
                   statusFilter,
                   meetAlfredAddedFilter,
+                  instantlyAddedFilter,
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
                   excludeNotALead,
@@ -1298,6 +1571,14 @@ export function EnrichedPage() {
                 onClick={() => void openMeetAlfredModal()}
               >
                 Bulk Send To Meet Alfred
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0}
+                onClick={() => void openInstantlyModal()}
+              >
+                Bulk Send To Instantly
               </button>
             </div>
           </div>
@@ -1421,6 +1702,29 @@ export function EnrichedPage() {
                 </div>
               </fieldset>
               <fieldset className="filter-fieldset">
+                <legend>Added to Instantly</legend>
+                <div className="filter-radio-list">
+                  {(
+                    [
+                      ["all", "All"],
+                      ["added", "Added only"],
+                      ["not_added", "Not added only"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label key={value} className="filter-radio-row">
+                      <input
+                        type="radio"
+                        name="instantly-added-filter"
+                        value={value}
+                        checked={instantlyAddedFilter === value}
+                        onChange={() => setInstantlyAddedFilter(value)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <fieldset className="filter-fieldset">
                 <legend>Company source country</legend>
                 <p className="filter-fieldset-hint">
                   Choose one or more. Leave all unchecked to include every country.
@@ -1514,6 +1818,7 @@ export function EnrichedPage() {
                 onClick={() => {
                   setStatusFilter("approved");
                   setMeetAlfredAddedFilter("all");
+                  setInstantlyAddedFilter("not_added");
                   setExcludePredictedOriginBlacklist(true);
                   setExcludeContactLocationBlacklist(true);
                   setExcludeNotALead(true);
@@ -1706,6 +2011,77 @@ export function EnrichedPage() {
         </div>
       )}
 
+      {instantlyModalOpen && (
+        <div className="modal-backdrop" onClick={() => setInstantlyModalOpen(false)}>
+          <div className="modal filter-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Send To Instantly</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setInstantlyModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="filter-modal-body">
+              <p className="filter-fieldset-hint">
+                Selected leads: <strong>{selectedCount}</strong>
+              </p>
+              <label className="field">
+                <span>Campaign</span>
+                <select
+                  value={selectedInstantlyCampaignId}
+                  onChange={(e) => setSelectedInstantlyCampaignId(e.target.value)}
+                  disabled={instantlyCampaignsLoading || instantlyCampaigns.length === 0}
+                >
+                  {instantlyCampaigns.length === 0 ? (
+                    <option value="">No campaigns available</option>
+                  ) : (
+                    instantlyCampaigns.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              {instantlyCampaignsLoading && (
+                <div className="meta-filter-hint">Loading Instantly campaigns...</div>
+              )}
+              {instantlyCampaignsError && <div className="error">{instantlyCampaignsError}</div>}
+              {instantlySendResultMessage && (
+                <div className="meta-bar">{instantlySendResultMessage}</div>
+              )}
+            </div>
+            <div className="modal-foot filter-modal-foot">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setInstantlyModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={
+                  sendingToInstantly ||
+                  instantlyCampaignsLoading ||
+                  selectedRowsForActions.length === 0 ||
+                  !selectedInstantlyCampaignId
+                }
+                onClick={() => void sendSelectedToInstantly()}
+              >
+                {sendingToInstantly ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <JobDetailModalHost />
+
       {columnConfigOpen && (
         <div className="modal-backdrop" onClick={() => setColumnConfigOpen(false)}>
           <div className="modal column-config-modal" onClick={(e) => e.stopPropagation()}>
@@ -1720,11 +2096,17 @@ export function EnrichedPage() {
               </button>
             </div>
             <div className="dm-results">
+              {(() => {
+                const modalOrderedColumns = sortColumnsByOrder(columns, columnDraftOrder);
+                return (
+                  <>
               <div className="column-picker-top">
                 <button
                   type="button"
                   className="column-btn"
-                  onClick={() => setVisibleColumnKeys(new Set(orderedColumns.map((col) => col.key)))}
+                  onClick={() =>
+                    setColumnDraftVisibleKeys(new Set(modalOrderedColumns.map((col) => col.key)))
+                  }
                 >
                   Show all
                 </button>
@@ -1732,14 +2114,14 @@ export function EnrichedPage() {
                   type="button"
                   className="column-btn"
                   onClick={() => {
-                    const defaults = orderedColumns
+                    const defaults = modalOrderedColumns
                       .map((column) => column.key)
                       .filter((key) => DEFAULT_VISIBLE_COLUMN_KEYS.has(key));
-                    setVisibleColumnKeys(
+                    setColumnDraftVisibleKeys(
                       new Set(
                         defaults.length > 0
                           ? defaults
-                          : orderedColumns.map((column) => column.key),
+                          : modalOrderedColumns.map((column) => column.key),
                       ),
                     );
                   }}
@@ -1748,7 +2130,7 @@ export function EnrichedPage() {
                 </button>
               </div>
               <div className="column-picker-list">
-                {orderedColumns.map((column) => (
+                {modalOrderedColumns.map((column) => (
                   <label
                     key={column.key}
                     className={`column-toggle-item ${
@@ -1759,13 +2141,13 @@ export function EnrichedPage() {
                     onDragOver={(e) => {
                       e.preventDefault();
                       if (draggingColumnKey && draggingColumnKey !== column.key) {
-                        moveColumnBefore(draggingColumnKey, column.key);
+                        moveDraftColumnBefore(draggingColumnKey, column.key);
                       }
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
                       if (draggingColumnKey && draggingColumnKey !== column.key) {
-                        moveColumnBefore(draggingColumnKey, column.key);
+                        moveDraftColumnBefore(draggingColumnKey, column.key);
                       }
                       setDraggingColumnKey(null);
                     }}
@@ -1773,9 +2155,9 @@ export function EnrichedPage() {
                   >
                     <input
                       type="checkbox"
-                      checked={visibleColumnKeys.has(column.key)}
+                      checked={columnDraftVisibleKeys.has(column.key)}
                       onChange={(e) => {
-                        setVisibleColumnKeys((prev) => {
+                        setColumnDraftVisibleKeys((prev) => {
                           const next = new Set(prev);
                           if (e.target.checked) next.add(column.key);
                           else next.delete(column.key);
@@ -1787,6 +2169,9 @@ export function EnrichedPage() {
                   </label>
                 ))}
               </div>
+                  </>
+                );
+              })()}
             </div>
             <div className="modal-foot">
               <button
@@ -1794,7 +2179,14 @@ export function EnrichedPage() {
                 className="btn-secondary"
                 onClick={() => setColumnConfigOpen(false)}
               >
-                Close
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={applyColumnConfig}
+              >
+                Apply
               </button>
             </div>
           </div>
@@ -1812,6 +2204,7 @@ export function EnrichedPage() {
                 {filterSummary(
                   statusFilter,
                   meetAlfredAddedFilter,
+                  instantlyAddedFilter,
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
                   excludeNotALead,
@@ -1870,6 +2263,14 @@ export function EnrichedPage() {
               >
                 Bulk Send To Meet Alfred
               </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={selectedCount === 0}
+                onClick={() => void openInstantlyModal()}
+              >
+                Bulk Send To Instantly
+              </button>
             </div>
           </div>
           {revealResultMessage && <div className="meta-bar">{revealResultMessage}</div>}
@@ -1886,7 +2287,6 @@ export function EnrichedPage() {
                       ? companyIdValue
                       : null;
                   if (!companyId) return null;
-                  const reasonDraft = rejectReasonByCompanyId[companyId] ?? "";
                   const isOpen = rejectOpenCompanyId === companyId;
                   const isSaving = rejectingCompanyId === companyId;
                   return (
@@ -1905,18 +2305,14 @@ export function EnrichedPage() {
                             type="text"
                             className="inline-edit-input"
                             placeholder="Rejection reason"
-                            value={reasonDraft}
-                            onChange={(e) =>
-                              setRejectReasonByCompanyId((prev) => ({
-                                ...prev,
-                                [companyId]: e.target.value,
-                              }))
-                            }
+                            ref={(el) => {
+                              rejectReasonInputRefs.current[companyId] = el;
+                            }}
                           />
                           <button
                             type="button"
                             className="inline-edit-save-btn"
-                            disabled={isSaving || reasonDraft.trim().length === 0}
+                            disabled={isSaving}
                             onClick={() => void submitRejectCompany(companyId)}
                           >
                             {isSaving ? "Saving..." : "Submit"}
