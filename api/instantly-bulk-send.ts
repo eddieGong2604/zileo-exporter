@@ -81,7 +81,7 @@ export default async function handler(
       .map((email) => byEmail.get(email))
       .filter((id): id is number => typeof id === "number" && Number.isFinite(id) && id > 0);
     const markedInstantly = await markContactsAddedToInstantly(successfulIds);
-    sendJson(res, 200, { ...result, markedInstantly });
+    sendJson(res, 200, { ...result, markedInstantly, markedContactIds: successfulIds });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to send Instantly leads";
     sendJson(res, 500, { error: message });

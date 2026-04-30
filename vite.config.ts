@@ -542,6 +542,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     sent: result.sent,
                     failed: result.failed,
                     marked,
+                    markedContactIds: successfulContactIds,
                   }),
                 );
               } catch (e) {
@@ -658,7 +659,9 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                 );
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json; charset=utf-8");
-                res.end(JSON.stringify({ ...result, markedInstantly }));
+                res.end(
+                  JSON.stringify({ ...result, markedInstantly, markedContactIds: successfulIds }),
+                );
               } catch (e) {
                 const msg = e instanceof Error ? e.message : "Failed to send Instantly leads";
                 res.statusCode = 500;

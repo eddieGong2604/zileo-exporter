@@ -1059,7 +1059,27 @@ export function EnrichedPage() {
       setSendResultMessage(
         `Sent ${result.sent}/${result.attempted} leads (failed: ${result.failed}, marked: ${result.marked}).`,
       );
-      await loadRows();
+      if (result.markedContactIds.length > 0) {
+        const markedIds = new Set(result.markedContactIds);
+        const nowIso = new Date().toISOString();
+        setRows((prev) =>
+          prev
+            .map((row) => {
+              const id = Number(row.id ?? 0);
+              if (!markedIds.has(id)) return row;
+              return {
+                ...row,
+                addedToMeetAlfredCampaign: true,
+                addedToMeetAlfredAt: nowIso,
+              };
+            })
+            .filter((row) =>
+              meetAlfredAddedFilter === "not_added"
+                ? !markedIds.has(Number(row.id ?? 0))
+                : true,
+            ),
+        );
+      }
     } catch (e) {
       setCampaignsError(e instanceof Error ? e.message : "Failed to send leads");
     } finally {
@@ -1116,14 +1136,20 @@ export function EnrichedPage() {
           company_name: companyNameFromRow(row),
         })),
       });
-      if (result.markedInstantly > 0) {
+      if (result.markedContactIds.length > 0) {
+        const markedIds = new Set(result.markedContactIds);
         const nowIso = new Date().toISOString();
         setRows((prev) =>
-          prev.map((row) =>
-            eligibleRows.some((lead) => Number(lead.id ?? 0) === Number(row.id ?? 0))
-              ? { ...row, addedToInstantlyAt: nowIso }
-              : row,
-          ),
+          prev
+            .map((row) => {
+              const id = Number(row.id ?? 0);
+              return markedIds.has(id) ? { ...row, addedToInstantlyAt: nowIso } : row;
+            })
+            .filter((row) =>
+              instantlyAddedFilter === "not_added"
+                ? !markedIds.has(Number(row.id ?? 0))
+                : true,
+            ),
         );
       }
       setInstantlySendResultMessage(

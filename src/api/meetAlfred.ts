@@ -26,7 +26,13 @@ export async function bulkSendMeetAlfred(input: {
     csv_email: string;
     csv_country: string;
   }>;
-}): Promise<{ attempted: number; sent: number; failed: number; marked: number }> {
+}): Promise<{
+  attempted: number;
+  sent: number;
+  failed: number;
+  marked: number;
+  markedContactIds: number[];
+}> {
   const res = await fetch("/api/meet-alfred-bulk-send", {
     method: "POST",
     headers: { "Content-Type": "application/json", accept: "application/json" },
@@ -41,5 +47,6 @@ export async function bulkSendMeetAlfred(input: {
     sent: number;
     failed: number;
     marked: number;
+    markedContactIds: number[];
   };
 }

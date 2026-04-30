@@ -29,6 +29,7 @@ export async function bulkSendInstantly(input: {
   duplicateEmailCount: number;
   incompleteCount: number;
   markedInstantly: number;
+  markedContactIds: number[];
 }> {
   const res = await fetch("/api/instantly-bulk-send", {
     method: "POST",
@@ -46,5 +47,6 @@ export async function bulkSendInstantly(input: {
     duplicateEmailCount: number;
     incompleteCount: number;
     markedInstantly: number;
+    markedContactIds: number[];
   };
 }

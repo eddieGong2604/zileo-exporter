@@ -87,6 +87,7 @@ export default async function handler(
       sent: result.sent,
       failed: result.failed,
       marked,
+      markedContactIds: successfulContactIds,
     });
   } catch (error) {
     const message =
