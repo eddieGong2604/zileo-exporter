@@ -543,6 +543,18 @@ function firstNameFromRow(row: EnrichedContact): string {
   return firstNameFromContactName(row.contactName);
 }
 
+function syncContactNameWithFirstName(
+  contactName: string | null,
+  firstName: string,
+): string | null {
+  const base = (contactName ?? "").trim();
+  const nextFirst = firstName.trim();
+  if (!base) return nextFirst || contactName;
+  const rest = base.replace(/^[^\s]+\s*/, "").trim();
+  if (!nextFirst) return rest || null;
+  return rest ? `${nextFirst} ${rest}` : nextFirst;
+}
+
 function companyNameFromRow(row: EnrichedContact): string {
   const raw = row.company?.source_company_name;
   return typeof raw === "string" ? raw.trim() : "";
@@ -1324,6 +1336,14 @@ export function EnrichedPage() {
             ? ({
                 ...item,
                 [config.valueKey]: draftValue,
+                ...(config.field === "first_name"
+                  ? {
+                      contactName: syncContactNameWithFirstName(
+                        item.contactName,
+                        String(draftValue ?? ""),
+                      ),
+                    }
+                  : {}),
               } as EnrichedContact)
             : item,
         );
