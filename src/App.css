@@ -60,6 +60,66 @@
   margin-bottom: 1.25rem;
 }
 
+.job-title-toolbar-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem 1.25rem;
+}
+
+.job-title-toolbar-fields {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+
+.job-title-toolbar-label {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.35rem;
+}
+
+.job-title-toolbar-hint {
+  margin: 0 0 0.45rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.job-title-code {
+  font-size: 0.78em;
+}
+
+.job-title-kbd {
+  display: inline-block;
+  padding: 0.08rem 0.35rem;
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+  background: #e2e8f0;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+}
+
+.job-title-toolbar-textarea {
+  min-height: 3.25rem;
+}
+
+.job-title-toolbar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+  min-width: 7.5rem;
+}
+
+.job-title-toolbar-dirty {
+  font-size: 0.72rem;
+  color: #b45309;
+  max-width: 12rem;
+  line-height: 1.3;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -331,6 +391,12 @@ tr:last-child td {
 
 .all-jobs-label:hover {
   color: #1e40af;
+}
+
+.all-jobs-more-matches {
+  font-size: 0.75rem;
+  color: #64748b;
+  padding-top: 0.1rem;
 }
 
 .job-detail-modal {
@@ -697,6 +763,22 @@ tr:last-child td {
   font-size: 0.75rem;
   color: #64748b;
   line-height: 1.35;
+}
+
+.filter-text-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.88rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.filter-textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+  line-height: 1.35;
+  font-family: inherit;
 }
 
 .filter-checkbox-stack {

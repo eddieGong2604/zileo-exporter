@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dayjs from "dayjs";
 import { marked } from "marked";
 import { bulkRevealEmails } from "../api/apolloBulkReveal";
@@ -8,9 +8,19 @@ import {
   type EditableContactField,
 } from "../api/contactUpdateField";
 import { fetchEnrichedContacts } from "../api/enrichedContacts";
-import { bulkSendInstantly, fetchInstantlyCampaigns } from "../api/instantly";
-import { bulkSendMeetAlfred, fetchMeetAlfredCampaigns } from "../api/meetAlfred";
+import {
+  bulkSendInstantly,
+  fetchInstantlyCampaigns,
+  type InstantlyCampaign,
+} from "../api/instantly";
+import {
+  bulkSendMeetAlfred,
+  fetchMeetAlfredCampaigns,
+  type MeetAlfredCampaign,
+} from "../api/meetAlfred";
 import type { EnrichedContact } from "../types/enriched";
+import { EnrichedContactTitleToolbar } from "./EnrichedContactTitleToolbar";
+import { EnrichedJobTitleToolbar } from "./EnrichedJobTitleToolbar";
 
 type ColumnDef = {
   key: string;
@@ -23,17 +33,6 @@ type CompanyStatusFilter = "all" | "approved" | "queued" | "rejected";
 type MeetAlfredAddedFilter = "all" | "added" | "not_added";
 type InstantlyAddedFilter = "all" | "added" | "not_added";
 type LatestJobPostedFilter = "24h" | "3d" | "1w" | "all";
-type MeetAlfredCampaign = {
-  id: number;
-  label: string;
-  status?: string;
-  webhookKey: string;
-};
-type InstantlyCampaign = {
-  id: string;
-  name: string;
-  status?: number;
-};
 type EditableColumnConfig = {
   field: EditableContactField;
   valueKey: keyof EnrichedContact;
@@ -43,6 +42,7 @@ type CompanyJobItem = {
   id?: string;
   source?: string;
   jobtitle?: string;
+  jobTitle?: string;
   description?: string;
 };
 type JobDetailPayload = {
@@ -64,10 +64,13 @@ const LS_KEYS = {
   excludeOriginBlacklist: "enriched.excludeOriginBlacklist",
   excludeLocationBlacklist: "enriched.excludeLocationBlacklist",
   excludeNotALead: "enriched.excludeNotALead",
+  contactNameContainsSpace: "enriched.contactNameContainsSpace",
   meetAlfredAddedFilter: "enriched.meetAlfredAddedFilter",
   instantlyAddedFilter: "enriched.instantlyAddedFilter",
   sourceCountries: "enriched.sourceCountries",
   latestJobPosted: "enriched.latestJobPosted",
+  jobTitleFilter: "enriched.jobTitleFilter",
+  contactTitleFilter: "enriched.contactTitleFilter",
   visibleColumns: "enriched.visibleColumns",
   columnOrder: "enriched.columnOrder",
 } as const;
@@ -280,6 +283,46 @@ function companyAllJobs(value: unknown): CompanyJobItem[] {
   }
 }
 
+function companyJobDisplayTitle(job: CompanyJobItem): string {
+  return ((job.jobtitle ?? job.jobTitle ?? "") as string).trim();
+}
+
+/** First occurrence wins; titles compared case-insensitively after trim */
+function dedupeCompanyJobsByTitle(jobs: CompanyJobItem[]): CompanyJobItem[] {
+  const seen = new Set<string>();
+  const out: CompanyJobItem[] = [];
+  for (const job of jobs) {
+    const raw = companyJobDisplayTitle(job);
+    const key = raw.length > 0 ? raw.toLowerCase() : "\0__empty_title__";
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(job);
+  }
+  return out;
+}
+
+const MAX_ALL_JOBS_MATCHES_SHOWN = 3;
+
+/** Same substring + case rules as server `all_jobs` filter; returns up to `maxShown` matches in array order */
+function companyJobsMatchingTitleFilter(
+  jobs: CompanyJobItem[],
+  filterNeedles: string[],
+  maxShown: number,
+): { shown: CompanyJobItem[]; hiddenMatchCount: number } {
+  const needles = filterNeedles.map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (needles.length === 0) {
+    return { shown: jobs, hiddenMatchCount: 0 };
+  }
+  const matched = jobs.filter((job) => {
+    const hay = companyJobDisplayTitle(job).toLowerCase();
+    return needles.some((n) => hay.includes(n));
+  });
+  return {
+    shown: matched.slice(0, maxShown),
+    hiddenMatchCount: Math.max(0, matched.length - maxShown),
+  };
+}
+
 function JobDetailModalHost() {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<JobDetailPayload | null>(null);
@@ -455,6 +498,63 @@ function selectionKeyForRow(row: EnrichedContact): string {
   return `${companyId}::${contactId}::${linkedin}::${name}`;
 }
 
+/** One term per line and/or comma-separated; deduped case-insensitively */
+function parseMultiTitleFilterInput(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(/[\n,]+/)) {
+    const t = part.trim();
+    if (!t) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Meet Alfred `csv_jobtitle`: strip emoji code points, remove every ASCII `(...)` segment
+ * (innermost pairs first for nesting), remove any remaining `(` or `)`, then normalize spaces and trim.
+ */
+function sanitizeMeetAlfredJobTitleString(s: string): string {
+  let out = s;
+  let prev = "";
+  while (out !== prev) {
+    prev = out;
+    out = out.replace(/\([^()]*\)/g, "");
+  }
+  out = out
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\uFE0F\u200D]+/g, "")
+    .replace(/\p{Emoji_Modifier}/gu, "")
+    .replace(/[()]/g, "");
+  return out.replace(/\s+/g, " ").trim();
+}
+
+/** First distinct job title from `all_jobs` after dedupe; if job-title filter is applied, only jobs matching those terms (same rules as list API / UI). Result is passed through {@link sanitizeMeetAlfredJobTitleString} for Meet Alfred `csv_jobtitle`. */
+function csvJobtitleForMeetAlfredRow(row: EnrichedContact, jobTitleFilterRaw: string): string {
+  const company = row.company;
+  const raw =
+    company && typeof company === "object"
+      ? (company as Record<string, unknown>).all_jobs
+      : undefined;
+  const deduped = dedupeCompanyJobsByTitle(companyAllJobs(raw));
+  const needles = parseMultiTitleFilterInput(jobTitleFilterRaw)
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  const filtered =
+    needles.length > 0
+      ? deduped.filter((job) => {
+          const hay = companyJobDisplayTitle(job).toLowerCase();
+          return needles.some((n) => hay.includes(n));
+        })
+      : deduped;
+  const first = filtered[0];
+  const rawTitle = first ? companyJobDisplayTitle(first) : "";
+  return sanitizeMeetAlfredJobTitleString(rawTitle);
+}
+
 function filterSummary(
   status: CompanyStatusFilter,
   meetAlfredAddedFilter: MeetAlfredAddedFilter,
@@ -462,8 +562,12 @@ function filterSummary(
   excludeOriginBlacklist: boolean,
   excludeLocationBlacklist: boolean,
   excludeNotALead: boolean,
+  contactNameContainsSpace: boolean,
   sourceCountries: ReadonlySet<string>,
   latestJobPosted: LatestJobPostedFilter,
+  /** Applied job title filter (not draft while typing) */
+  jobTitleApplied: string,
+  contactTitleApplied: string,
 ): string {
   const statusPart =
     status === "all" ? "All statuses" : `${status[0]!.toUpperCase()}${status.slice(1)}`;
@@ -489,6 +593,11 @@ function filterSummary(
     excludeLocationBlacklist ? "Location not blacklisted" : "Any location blacklist",
   );
   parts.push(excludeNotALead ? "Exclude not-a-lead" : "Include not-a-lead");
+  parts.push(
+    contactNameContainsSpace
+      ? "contact_name contains a space"
+      : "contact_name: any (no space-only filter)",
+  );
   if (sourceCountries.size === 0) {
     parts.push("All source countries");
   } else {
@@ -505,6 +614,38 @@ function filterSummary(
           ? "Latest job: 3d"
           : "Latest job: 1w",
   );
+  const jtTerms = parseMultiTitleFilterInput(jobTitleApplied);
+  if (jtTerms.length === 0) {
+    parts.push("All job titles (all_jobs)");
+  } else if (jtTerms.length === 1) {
+    const t = jtTerms[0]!;
+    parts.push(
+      `Job title (all_jobs): contains "${t.length > 48 ? `${t.slice(0, 48)}...` : t}"`,
+    );
+  } else {
+    const preview = jtTerms
+      .slice(0, 2)
+      .map((t) => (t.length > 24 ? `${t.slice(0, 24)}...` : t))
+      .join(", ");
+    const extra = jtTerms.length > 2 ? ` +${jtTerms.length - 2} more` : "";
+    parts.push(`Job titles (all_jobs, OR): ${preview}${extra}`);
+  }
+  const ctTerms = parseMultiTitleFilterInput(contactTitleApplied);
+  if (ctTerms.length === 0) {
+    parts.push("All contact titles");
+  } else if (ctTerms.length === 1) {
+    const t = ctTerms[0]!;
+    parts.push(
+      `Contact title: contains "${t.length > 48 ? `${t.slice(0, 48)}...` : t}"`,
+    );
+  } else {
+    const preview = ctTerms
+      .slice(0, 2)
+      .map((t) => (t.length > 24 ? `${t.slice(0, 24)}...` : t))
+      .join(", ");
+    const extra = ctTerms.length > 2 ? ` +${ctTerms.length - 2} more` : "";
+    parts.push(`Contact titles (OR): ${preview}${extra}`);
+  }
   return parts.join(" · ");
 }
 
@@ -563,6 +704,63 @@ function companyNameFromRow(row: EnrichedContact): string {
 function companyCountryFromRow(row: EnrichedContact): string {
   const raw = row.company?.source_country;
   return typeof raw === "string" ? raw.trim() : "";
+}
+
+const MEET_ALFRED_UK_CAMPAIGN_LABEL = "UnitedKingdom_JobTitle_Personalise";
+const MEET_ALFRED_AU_CAMPAIGN_LABEL = "Australia_JobTitle_Personalise";
+
+function meetAlfredTargetCampaignLabelForCountry(country: string): string | null {
+  const n = country.trim().toLowerCase();
+  if (n === "united kingdom") return MEET_ALFRED_UK_CAMPAIGN_LABEL;
+  if (n === "australia") return MEET_ALFRED_AU_CAMPAIGN_LABEL;
+  return null;
+}
+
+function findMeetAlfredCampaignByLabel(
+  list: MeetAlfredCampaign[],
+  label: string,
+): MeetAlfredCampaign | null {
+  const want = label.trim().toLowerCase();
+  return list.find((c) => c.label.trim().toLowerCase() === want) ?? null;
+}
+
+function meetAlfredCampaignPreviewForRow(
+  row: EnrichedContact,
+  list: MeetAlfredCampaign[],
+): string {
+  const country = companyCountryFromRow(row);
+  const targetLabel = meetAlfredTargetCampaignLabelForCountry(country);
+  if (!targetLabel) return "—";
+  const c = findMeetAlfredCampaignByLabel(list, targetLabel);
+  return c ? `${c.label} (id ${c.id})` : `Missing: ${targetLabel}`;
+}
+
+const INSTANTLY_US_CAMPAIGN_NAME = "US_Campaign";
+const INSTANTLY_UK_CAMPAIGN_NAME = "UK_Campaign";
+const INSTANTLY_AU_CAMPAIGN_NAME = "AU_Campaign";
+
+function instantlyTargetCampaignNameForCountry(country: string): string | null {
+  const n = country.trim().toLowerCase();
+  if (n === "united states") return INSTANTLY_US_CAMPAIGN_NAME;
+  if (n === "united kingdom") return INSTANTLY_UK_CAMPAIGN_NAME;
+  if (n === "australia") return INSTANTLY_AU_CAMPAIGN_NAME;
+  return null;
+}
+
+function findInstantlyCampaignByName(
+  list: InstantlyCampaign[],
+  name: string,
+): InstantlyCampaign | null {
+  const want = name.trim().toLowerCase();
+  return list.find((c) => c.name.trim().toLowerCase() === want) ?? null;
+}
+
+function instantlyCampaignPreviewForRow(row: EnrichedContact, list: InstantlyCampaign[]): string {
+  const country = companyCountryFromRow(row);
+  const targetName = instantlyTargetCampaignNameForCountry(country);
+  if (!targetName) return "— (not US/UK/AU)";
+  const c = findInstantlyCampaignByName(list, targetName);
+  return c ? c.name : `Missing: ${targetName}`;
 }
 
 function valueForCsv(row: EnrichedContact, column: ColumnDef): string {
@@ -650,6 +848,11 @@ export function EnrichedPage() {
     if (raw === "true") return true;
     return true;
   });
+  const [contactNameContainsSpace, setContactNameContainsSpace] = useState(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.contactNameContainsSpace);
+    if (raw === "true") return true;
+    return false;
+  });
   const [sourceCountrySelection, setSourceCountrySelection] = useState<Set<string>>(
     () => {
       const raw = safeReadLocalStorage(LS_KEYS.sourceCountries);
@@ -671,6 +874,14 @@ export function EnrichedPage() {
     if (raw === "24h" || raw === "3d" || raw === "1w" || raw === "all") return raw;
     return "all";
   });
+  const [jobTitleApplied, setJobTitleApplied] = useState<string>(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.jobTitleFilter);
+    return typeof raw === "string" ? raw : "";
+  });
+  const [contactTitleApplied, setContactTitleApplied] = useState<string>(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.contactTitleFilter);
+    return typeof raw === "string" ? raw : "";
+  });
   const [page, setPage] = useState(1);
   const [totalContacts, setTotalContacts] = useState(0);
   const [totalCompanies, setTotalCompanies] = useState(0);
@@ -684,14 +895,12 @@ export function EnrichedPage() {
   const [campaignsLoading, setCampaignsLoading] = useState(false);
   const [campaignsError, setCampaignsError] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<MeetAlfredCampaign[]>([]);
-  const [selectedCampaignComposite, setSelectedCampaignComposite] = useState("");
   const [sendingToMeetAlfred, setSendingToMeetAlfred] = useState(false);
   const [sendResultMessage, setSendResultMessage] = useState<string | null>(null);
   const [instantlyModalOpen, setInstantlyModalOpen] = useState(false);
   const [instantlyCampaignsLoading, setInstantlyCampaignsLoading] = useState(false);
   const [instantlyCampaignsError, setInstantlyCampaignsError] = useState<string | null>(null);
   const [instantlyCampaigns, setInstantlyCampaigns] = useState<InstantlyCampaign[]>([]);
-  const [selectedInstantlyCampaignId, setSelectedInstantlyCampaignId] = useState("");
   const [sendingToInstantly, setSendingToInstantly] = useState(false);
   const [instantlySendResultMessage, setInstantlySendResultMessage] = useState<string | null>(null);
   const [revealingEmails, setRevealingEmails] = useState(false);
@@ -705,6 +914,26 @@ export function EnrichedPage() {
   const editTextInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const editBooleanInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
+  const handleJobTitleApply = useCallback((draft: string) => {
+    setJobTitleApplied(draft);
+    safeWriteLocalStorage(LS_KEYS.jobTitleFilter, draft);
+  }, []);
+
+  const handleJobTitleClear = useCallback(() => {
+    setJobTitleApplied("");
+    safeWriteLocalStorage(LS_KEYS.jobTitleFilter, "");
+  }, []);
+
+  const handleContactTitleApply = useCallback((draft: string) => {
+    setContactTitleApplied(draft);
+    safeWriteLocalStorage(LS_KEYS.contactTitleFilter, draft);
+  }, []);
+
+  const handleContactTitleClear = useCallback(() => {
+    setContactTitleApplied("");
+    safeWriteLocalStorage(LS_KEYS.contactTitleFilter, "");
+  }, []);
+
   const loadRows = async () => {
     setLoading(true);
     setError(null);
@@ -716,8 +945,11 @@ export function EnrichedPage() {
         excludeOriginBlacklisted: excludePredictedOriginBlacklist,
         excludeLocationBlacklisted: excludeContactLocationBlacklist,
         excludeNotALead,
+        contactNameContainsSpace,
         sourceCountries: Array.from(sourceCountrySelection),
         latestJobPosted: latestJobPostedFilter,
+        jobTitles: parseMultiTitleFilterInput(jobTitleApplied),
+        contactTitles: parseMultiTitleFilterInput(contactTitleApplied),
         page,
         limit: 100,
       });
@@ -740,8 +972,11 @@ export function EnrichedPage() {
     excludePredictedOriginBlacklist,
     excludeContactLocationBlacklist,
     excludeNotALead,
+    contactNameContainsSpace,
     sourceCountrySelection,
     latestJobPostedFilter,
+    jobTitleApplied,
+    contactTitleApplied,
     page,
   ]);
 
@@ -844,6 +1079,13 @@ export function EnrichedPage() {
 
   useEffect(() => {
     safeWriteLocalStorage(
+      LS_KEYS.contactNameContainsSpace,
+      String(contactNameContainsSpace),
+    );
+  }, [contactNameContainsSpace]);
+
+  useEffect(() => {
+    safeWriteLocalStorage(
       LS_KEYS.sourceCountries,
       JSON.stringify(Array.from(sourceCountrySelection)),
     );
@@ -862,8 +1104,11 @@ export function EnrichedPage() {
     excludePredictedOriginBlacklist,
     excludeContactLocationBlacklist,
     excludeNotALead,
+    contactNameContainsSpace,
     sourceCountrySelection,
     latestJobPostedFilter,
+    jobTitleApplied,
+    contactTitleApplied,
   ]);
 
   useEffect(() => {
@@ -1027,15 +1272,8 @@ export function EnrichedPage() {
     setCampaignsLoading(true);
     setCampaignsError(null);
     try {
-      const list = (await fetchMeetAlfredCampaigns()).filter(
-        (campaign) => (campaign.status ?? "").trim().toLowerCase() === "active",
-      );
+      const list = await fetchMeetAlfredCampaigns();
       setCampaigns(list);
-      if (list.length > 0) {
-        setSelectedCampaignComposite(`${list[0].webhookKey}::${list[0].id}`);
-      } else {
-        setSelectedCampaignComposite("");
-      }
     } catch (e) {
       setCampaignsError(e instanceof Error ? e.message : "Failed to load campaigns");
     } finally {
@@ -1046,30 +1284,63 @@ export function EnrichedPage() {
   const sendSelectedToMeetAlfred = async () => {
     const selectedRows = selectedRowsForActions;
     if (selectedRows.length === 0) return;
-    const [webhookKey, campaignIdRaw] = selectedCampaignComposite.split("::");
-    const campaignId = Number(campaignIdRaw);
-    if (!webhookKey || !Number.isFinite(campaignId)) {
-      setSendResultMessage("Please select a campaign");
+    if (campaigns.length === 0) {
+      setSendResultMessage("Campaign list not loaded yet; wait a moment and try again.");
       return;
     }
     setSendingToMeetAlfred(true);
     setCampaignsError(null);
     setSendResultMessage(null);
     try {
-      const result = await bulkSendMeetAlfred({
-        webhookKey,
-        campaignId,
-        leads: selectedRows.map((row) => ({
+      const skipped: string[] = [];
+      const leads: Array<{
+        contactId: number;
+        webhookKey: string;
+        campaignId: number;
+        linkedin_profile_url: string;
+        csv_firstname: string;
+        csv_companyname: string;
+        csv_email: string;
+        csv_country: string;
+        csv_jobtitle: string;
+      }> = [];
+      for (const row of selectedRows) {
+        const country = companyCountryFromRow(row);
+        const targetLabel = meetAlfredTargetCampaignLabelForCountry(country);
+        if (!targetLabel) {
+          skipped.push(`#${row.id ?? "?"} (${country || "no country"})`);
+          continue;
+        }
+        const campaign = findMeetAlfredCampaignByLabel(campaigns, targetLabel);
+        if (!campaign) {
+          skipped.push(`#${row.id ?? "?"} (campaign "${targetLabel}" not found)`);
+          continue;
+        }
+        leads.push({
           contactId: Number(row.id ?? 0),
+          webhookKey: campaign.webhookKey,
+          campaignId: campaign.id,
           linkedin_profile_url: (row.contactLinkedin ?? "").trim(),
           csv_firstname: firstNameFromRow(row),
           csv_companyname: companyNameFromRow(row),
           csv_email: (row.email ?? "").trim(),
-          csv_country: companyCountryFromRow(row),
-        })),
-      });
+          csv_country: country,
+          csv_jobtitle: csvJobtitleForMeetAlfredRow(row, jobTitleApplied),
+        });
+      }
+      if (leads.length === 0) {
+        setSendResultMessage(
+          skipped.length
+            ? `No leads sent. Skipped: ${skipped.slice(0, 12).join("; ")}${skipped.length > 12 ? "…" : ""}`
+            : "No leads to send.",
+        );
+        return;
+      }
+      const result = await bulkSendMeetAlfred({ leads });
+      const skipNote =
+        skipped.length > 0 ? ` Skipped ${skipped.length} (not UK/AU or missing campaign).` : "";
       setSendResultMessage(
-        `Sent ${result.sent}/${result.attempted} leads (failed: ${result.failed}, marked: ${result.marked}).`,
+        `Sent ${result.sent}/${result.attempted} leads (failed: ${result.failed}, marked: ${result.marked}).${skipNote}`,
       );
       if (result.markedContactIds.length > 0) {
         const markedIds = new Set(result.markedContactIds);
@@ -1108,9 +1379,6 @@ export function EnrichedPage() {
     try {
       const list = await fetchInstantlyCampaigns();
       setInstantlyCampaigns(list);
-      if (list.length > 0) {
-        setSelectedInstantlyCampaignId(list[0].id);
-      }
     } catch (e) {
       setInstantlyCampaignsError(
         e instanceof Error ? e.message : "Failed to load Instantly campaigns",
@@ -1130,24 +1398,53 @@ export function EnrichedPage() {
       setInstantlySendResultMessage(`Skipped ${skippedWithoutEmail} leads without email.`);
       return;
     }
-    const campaignId = selectedInstantlyCampaignId.trim();
-    if (!campaignId) {
-      setInstantlyCampaignsError("Please select a campaign");
+    if (instantlyCampaigns.length === 0) {
+      setInstantlyCampaignsError("Campaign list not loaded yet; wait a moment and try again.");
       return;
     }
     setSendingToInstantly(true);
     setInstantlyCampaignsError(null);
     setInstantlySendResultMessage(null);
     try {
-      const result = await bulkSendInstantly({
-        campaignId,
-        leads: eligibleRows.map((row) => ({
+      const skipped: string[] = [];
+      const leads: Array<{
+        contactId: number;
+        campaignId: string;
+        email: string;
+        first_name: string;
+        company_name: string;
+      }> = [];
+      for (const row of eligibleRows) {
+        const country = companyCountryFromRow(row);
+        const targetName = instantlyTargetCampaignNameForCountry(country);
+        if (!targetName) {
+          skipped.push(`#${row.id ?? "?"} (${country || "no country"})`);
+          continue;
+        }
+        const campaign = findInstantlyCampaignByName(instantlyCampaigns, targetName);
+        if (!campaign) {
+          skipped.push(`#${row.id ?? "?"} (campaign "${targetName}" not found)`);
+          continue;
+        }
+        leads.push({
           contactId: Number(row.id ?? 0),
+          campaignId: campaign.id,
           email: (row.email ?? "").trim(),
           first_name: firstNameFromRow(row),
           company_name: companyNameFromRow(row),
-        })),
-      });
+        });
+      }
+      if (leads.length === 0) {
+        setInstantlySendResultMessage(
+          skipped.length
+            ? `No leads sent. Skipped: ${skipped.slice(0, 12).join("; ")}${skipped.length > 12 ? "…" : ""}${skippedWithoutEmail ? `; ${skippedWithoutEmail} without email` : ""}`
+            : skippedWithoutEmail
+              ? `No leads to send (${skippedWithoutEmail} without email).`
+              : "No leads to send.",
+        );
+        return;
+      }
+      const result = await bulkSendInstantly({ leads });
       if (result.markedContactIds.length > 0) {
         const markedIds = new Set(result.markedContactIds);
         const nowIso = new Date().toISOString();
@@ -1164,8 +1461,10 @@ export function EnrichedPage() {
             ),
         );
       }
+      const skipNote =
+        skipped.length > 0 ? ` Skipped ${skipped.length} (not US/UK/AU or missing campaign).` : "";
       setInstantlySendResultMessage(
-        `Uploaded ${result.leadsUploaded}/${result.attempted}. Sent: ${result.totalSent}, skipped by Instantly: ${result.skippedCount}, skipped missing email: ${skippedWithoutEmail}, invalid: ${result.invalidEmailCount}, marked: ${result.markedInstantly}.`,
+        `Uploaded ${result.leadsUploaded}/${result.attempted}. Sent: ${result.totalSent}, skipped by Instantly: ${result.skippedCount}, skipped missing email: ${skippedWithoutEmail}, invalid: ${result.invalidEmailCount}, marked: ${result.markedInstantly}.${skipNote}`,
       );
     } catch (e) {
       setInstantlyCampaignsError(e instanceof Error ? e.message : "Failed to send Instantly leads");
@@ -1361,12 +1660,18 @@ export function EnrichedPage() {
 
   const renderCell = (row: EnrichedContact, column: ColumnDef) => {
     if (column.key === "company.all_jobs") {
-      const jobs = companyAllJobs(column.getValue(row));
+      const allJobs = dedupeCompanyJobsByTitle(companyAllJobs(column.getValue(row)));
+      const jobTitleNeedles = parseMultiTitleFilterInput(jobTitleApplied);
+      const { shown: jobs, hiddenMatchCount } = companyJobsMatchingTitleFilter(
+        allJobs,
+        jobTitleNeedles,
+        MAX_ALL_JOBS_MATCHES_SHOWN,
+      );
       if (jobs.length === 0) return "—";
       return (
         <div className="all-jobs-list">
           {jobs.map((job, idx) => {
-            const title = (job.jobtitle ?? "").trim() || `Job ${idx + 1}`;
+            const title = companyJobDisplayTitle(job) || `Job ${idx + 1}`;
             const source = (job.source ?? "").trim();
             const description = (job.description ?? "").trim();
             return (
@@ -1386,6 +1691,11 @@ export function EnrichedPage() {
               </button>
             );
           })}
+          {hiddenMatchCount > 0 ? (
+            <span className="all-jobs-more-matches" title="More roles match the job title filter">
+              +{hiddenMatchCount} more
+            </span>
+          ) : null}
         </div>
       );
     }
@@ -1530,8 +1840,11 @@ export function EnrichedPage() {
                 excludePredictedOriginBlacklist,
                 excludeContactLocationBlacklist,
                 excludeNotALead,
+                contactNameContainsSpace,
                 sourceCountrySelection,
                 latestJobPostedFilter,
+                jobTitleApplied,
+                contactTitleApplied,
               )}
             </span>
           </button>
@@ -1544,6 +1857,17 @@ export function EnrichedPage() {
           </button>
         </div>
       </section>
+
+      <EnrichedJobTitleToolbar
+        applied={jobTitleApplied}
+        onApply={handleJobTitleApply}
+        onClear={handleJobTitleClear}
+      />
+      <EnrichedContactTitleToolbar
+        applied={contactTitleApplied}
+        onApply={handleContactTitleApply}
+        onClear={handleContactTitleClear}
+      />
 
       {loading && <div className="meta-bar">Loading enriched contacts...</div>}
       {error && <div className="error">{error}</div>}
@@ -1563,8 +1887,11 @@ export function EnrichedPage() {
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
                   excludeNotALead,
+                  contactNameContainsSpace,
                   sourceCountrySelection,
                   latestJobPostedFilter,
+                  jobTitleApplied,
+                  contactTitleApplied,
                 )}
               </span>
             </span>
@@ -1856,6 +2183,20 @@ export function EnrichedPage() {
                   <span className="filter-checkbox-hint">(not_a_lead is null or false passes)</span>
                 </span>
               </label>
+              <label className="filter-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={contactNameContainsSpace}
+                  onChange={(e) => setContactNameContainsSpace(e.target.checked)}
+                />
+                <span>
+                  Only contacts whose <code className="job-title-code">contact_name</code> contains
+                  a space{" "}
+                  <span className="filter-checkbox-hint">
+                    (normal ASCII space; unchecked = no filter)
+                  </span>
+                </span>
+              </label>
             </div>
             <div className="modal-foot filter-modal-foot">
               <button
@@ -1870,6 +2211,12 @@ export function EnrichedPage() {
                   setExcludeNotALead(true);
                   setSourceCountrySelection(new Set(DEFAULT_SOURCE_COUNTRY_SELECTION));
                   setLatestJobPostedFilter("all");
+                  setJobTitleApplied("");
+                  safeWriteLocalStorage(LS_KEYS.jobTitleFilter, "");
+                  setContactTitleApplied("");
+                  safeWriteLocalStorage(LS_KEYS.contactTitleFilter, "");
+                  setContactNameContainsSpace(false);
+                  safeWriteLocalStorage(LS_KEYS.contactNameContainsSpace, "false");
                 }}
               >
                 Reset to defaults
@@ -1978,7 +2325,16 @@ export function EnrichedPage() {
             </div>
             <div className="filter-modal-body">
               <p className="filter-fieldset-hint">
-                Selected leads: <strong>{selectedCount}</strong>
+                Selected leads: <strong>{selectedCount}</strong>. Campaign is chosen from{" "}
+                <code className="job-title-code">company.source_country</code>: United Kingdom →{" "}
+                <strong>{MEET_ALFRED_UK_CAMPAIGN_LABEL}</strong>, Australia →{" "}
+                <strong>{MEET_ALFRED_AU_CAMPAIGN_LABEL}</strong>. Other countries are skipped. The{" "}
+                <strong>Job title</strong> column is the exact{" "}
+                <code className="job-title-code">csv_jobtitle</code> payload (from{" "}
+                <code className="job-title-code">all_jobs</code>, using your applied job-title filter
+                on this page). Emojis are removed; balanced ASCII <code className="job-title-code">()</code>{" "}
+                segments (with contents) are stripped, then any remaining <code className="job-title-code">(</code>{" "}
+                or <code className="job-title-code">)</code> characters are removed before send.
               </p>
               {selectedRowsForActions.length > 0 && (
                 <div className="meet-alfred-preview-wrap">
@@ -1990,43 +2346,36 @@ export function EnrichedPage() {
                         <th>Company Name</th>
                         <th>Email</th>
                         <th>Country</th>
+                        <th>Job title</th>
+                        <th>Meet Alfred campaign</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedRowsForActions.map((row) => (
-                        <tr key={`preview-${selectionKeyForRow(row)}`}>
-                          <td>{(row.contactLinkedin ?? "").trim() || "—"}</td>
-                          <td>{firstNameFromRow(row) || "—"}</td>
-                          <td>{companyNameFromRow(row) || "—"}</td>
-                          <td>{(row.email ?? "").trim() || "—"}</td>
-                          <td>{companyCountryFromRow(row) || "—"}</td>
-                        </tr>
-                      ))}
+                      {selectedRowsForActions.map((row) => {
+                        const csvJobtitle = csvJobtitleForMeetAlfredRow(
+                          row,
+                          jobTitleApplied,
+                        ).trim();
+                        return (
+                          <tr key={`preview-${selectionKeyForRow(row)}`}>
+                            <td>{(row.contactLinkedin ?? "").trim() || "—"}</td>
+                            <td>{firstNameFromRow(row) || "—"}</td>
+                            <td>{companyNameFromRow(row) || "—"}</td>
+                            <td>{(row.email ?? "").trim() || "—"}</td>
+                            <td>{companyCountryFromRow(row) || "—"}</td>
+                            <td>{csvJobtitle || "—"}</td>
+                            <td>
+                              {campaignsLoading
+                                ? "…"
+                                : meetAlfredCampaignPreviewForRow(row, campaigns)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
-              <label className="field">
-                <span>Campaign</span>
-                <select
-                  value={selectedCampaignComposite}
-                  onChange={(e) => setSelectedCampaignComposite(e.target.value)}
-                  disabled={campaignsLoading || campaigns.length === 0}
-                >
-                  {campaigns.length === 0 ? (
-                    <option value="">No campaigns available</option>
-                  ) : (
-                    campaigns.map((c) => (
-                      <option
-                        key={`${c.webhookKey}-${c.id}`}
-                        value={`${c.webhookKey}::${c.id}`}
-                      >
-                        {c.label} (id: {c.id})
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
               {campaignsLoading && <div className="meta-filter-hint">Loading campaigns...</div>}
               {campaignsError && <div className="error">{campaignsError}</div>}
               {sendResultMessage && <div className="meta-bar">{sendResultMessage}</div>}
@@ -2043,10 +2392,7 @@ export function EnrichedPage() {
                 type="button"
                 className="btn-primary"
                 disabled={
-                  sendingToMeetAlfred ||
-                  campaignsLoading ||
-                  selectedRowsForActions.length === 0 ||
-                  !selectedCampaignComposite
+                  sendingToMeetAlfred || campaignsLoading || selectedRowsForActions.length === 0
                 }
                 onClick={() => void sendSelectedToMeetAlfred()}
               >
@@ -2072,26 +2418,43 @@ export function EnrichedPage() {
             </div>
             <div className="filter-modal-body">
               <p className="filter-fieldset-hint">
-                Selected leads: <strong>{selectedCount}</strong>
+                Selected leads: <strong>{selectedCount}</strong>. Campaign is chosen from{" "}
+                <code className="job-title-code">company.source_country</code>: United States →{" "}
+                <strong>{INSTANTLY_US_CAMPAIGN_NAME}</strong>, United Kingdom →{" "}
+                <strong>{INSTANTLY_UK_CAMPAIGN_NAME}</strong>, Australia →{" "}
+                <strong>{INSTANTLY_AU_CAMPAIGN_NAME}</strong> (matched to Instantly campaign{" "}
+                <strong>name</strong>). Other countries are skipped. Only rows with an email are sent.
               </p>
-              <label className="field">
-                <span>Campaign</span>
-                <select
-                  value={selectedInstantlyCampaignId}
-                  onChange={(e) => setSelectedInstantlyCampaignId(e.target.value)}
-                  disabled={instantlyCampaignsLoading || instantlyCampaigns.length === 0}
-                >
-                  {instantlyCampaigns.length === 0 ? (
-                    <option value="">No campaigns available</option>
-                  ) : (
-                    instantlyCampaigns.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
+              {selectedRowsForActions.length > 0 && (
+                <div className="meet-alfred-preview-wrap">
+                  <table className="meet-alfred-preview-table">
+                    <thead>
+                      <tr>
+                        <th>Email</th>
+                        <th>First name</th>
+                        <th>Company</th>
+                        <th>Country</th>
+                        <th>Instantly campaign</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedRowsForActions.map((row) => (
+                        <tr key={`instantly-preview-${selectionKeyForRow(row)}`}>
+                          <td>{(row.email ?? "").trim() || "—"}</td>
+                          <td>{firstNameFromRow(row) || "—"}</td>
+                          <td>{companyNameFromRow(row) || "—"}</td>
+                          <td>{companyCountryFromRow(row) || "—"}</td>
+                          <td>
+                            {instantlyCampaignsLoading
+                              ? "…"
+                              : instantlyCampaignPreviewForRow(row, instantlyCampaigns)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
               {instantlyCampaignsLoading && (
                 <div className="meta-filter-hint">Loading Instantly campaigns...</div>
               )}
@@ -2114,8 +2477,7 @@ export function EnrichedPage() {
                 disabled={
                   sendingToInstantly ||
                   instantlyCampaignsLoading ||
-                  selectedRowsForActions.length === 0 ||
-                  !selectedInstantlyCampaignId
+                  selectedRowsForActions.length === 0
                 }
                 onClick={() => void sendSelectedToInstantly()}
               >
@@ -2254,8 +2616,11 @@ export function EnrichedPage() {
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
                   excludeNotALead,
+                  contactNameContainsSpace,
                   sourceCountrySelection,
                   latestJobPostedFilter,
+                  jobTitleApplied,
+                  contactTitleApplied,
                 )}
               </span>
             </span>

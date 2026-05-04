@@ -35,8 +35,19 @@ export type EnrichedServerFilters = {
   excludeOriginBlacklisted?: boolean;
   excludeLocationBlacklisted?: boolean;
   excludeNotALead?: boolean;
+  /** When true, only rows where `contacts.contact_name` contains an ASCII space */
+  contactNameContainsSpace?: boolean;
   sourceCountries?: string[];
   latestJobPosted?: LatestJobPostedFilter;
+  /**
+   * Case-insensitive substring match: row matches if any job in `companies.all_jobs`
+   * matches any of these needles (OR across needles and across jobs).
+   */
+  jobTitles?: string[];
+  /**
+   * Case-insensitive substring on `contacts.title`; row matches if any term matches (OR).
+   */
+  contactTitles?: string[];
   page?: number;
   limit?: number;
 };
@@ -111,6 +122,10 @@ export async function listEnrichedContacts(
     const excludeNotALead = filters?.excludeNotALead ?? true;
     if (excludeNotALead) where.push(`COALESCE(ct.not_a_lead, FALSE) IS FALSE`);
 
+    if (filters?.contactNameContainsSpace === true) {
+      where.push(`position(' ' IN COALESCE(ct.contact_name, '')) > 0`);
+    }
+
     const sourceCountries = Array.isArray(filters?.sourceCountries)
       ? filters?.sourceCountries.filter(Boolean)
       : [];
@@ -155,12 +170,56 @@ export async function listEnrichedContacts(
         `cp.source_latest_job_posted_at IS NOT NULL AND cp.source_latest_job_posted_at >= NOW() - INTERVAL '7 days'`,
       );
 
+    const jobTitleNeedles = Array.isArray(filters?.jobTitles)
+      ? [
+          ...new Set(
+            filters.jobTitles
+              .map((s) => String(s ?? "").trim().toLowerCase())
+              .filter((s) => s.length > 0),
+          ),
+        ]
+      : [];
+    if (jobTitleNeedles.length > 0) {
+      const titleExpr = `lower(COALESCE(job_rows.job->>'jobtitle', job_rows.job->>'jobTitle', ''))`;
+      const orMatch = jobTitleNeedles
+        .map((needle) => `position(${push(needle)} IN ${titleExpr}) > 0`)
+        .join(" OR ");
+      where.push(`EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          CASE
+            WHEN cp.all_jobs IS NULL THEN '[]'::jsonb
+            WHEN jsonb_typeof(cp.all_jobs::jsonb) = 'array' THEN cp.all_jobs::jsonb
+            ELSE '[]'::jsonb
+          END
+        ) AS job_rows(job)
+        WHERE jsonb_typeof(job_rows.job) = 'object'
+          AND (${orMatch})
+      )`);
+    }
+
+    const contactTitleNeedles = Array.isArray(filters?.contactTitles)
+      ? [
+          ...new Set(
+            filters.contactTitles
+              .map((s) => String(s ?? "").trim().toLowerCase())
+              .filter((s) => s.length > 0),
+          ),
+        ]
+      : [];
+    if (contactTitleNeedles.length > 0) {
+      const colExpr = `lower(COALESCE(ct.title, ''))`;
+      const orMatch = contactTitleNeedles
+        .map((needle) => `position(${push(needle)} IN ${colExpr}) > 0`)
+        .join(" OR ");
+      where.push(`(${orMatch})`);
+    }
+
     const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     const limitSql = push(limit);
     const offsetSql = push(offset);
 
-    const result = await client.query<EnrichedContact>(
-      `
+    const dataQueryText = `
         WITH filtered AS (
           SELECT
             ct.id,
@@ -193,21 +252,26 @@ export async function listEnrichedContacts(
         ORDER BY company->>'source_company_name' NULLS LAST, "contactName" NULLS LAST, id ASC
         LIMIT ${limitSql}
         OFFSET ${offsetSql}
-      `,
-      values,
-    );
+      `;
 
-    const countResult = await client.query<{ totalContacts: string; totalCompanies: string }>(
-      `
+    const countQueryText = `
         SELECT
           COUNT(*)::text AS "totalContacts",
           COUNT(DISTINCT cp.id)::text AS "totalCompanies"
         FROM contacts ct
         RIGHT JOIN companies cp ON cp.id = ct.company_id
         ${whereClause}
-      `,
-      values.slice(0, values.length - 2),
+      `;
+
+    const countValues = values.slice(0, values.length - 2);
+
+    const result = await client.query<EnrichedContact>(dataQueryText, values);
+
+    const countResult = await client.query<{ totalContacts: string; totalCompanies: string }>(
+      countQueryText,
+      countValues,
     );
+
     const counts = countResult.rows[0] ?? { totalContacts: "0", totalCompanies: "0" };
     return {
       data: result.rows,

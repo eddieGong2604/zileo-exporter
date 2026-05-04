@@ -1,7 +1,7 @@
 export const config = { runtime: "nodejs" };
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { addLeadsToMeetAlfredCampaign } from "../lib/meetAlfred.js";
+import { sendMeetAlfredBulkLeadsByCampaign } from "../lib/meetAlfred.js";
 import { markContactsAddedToMeetAlfred } from "../lib/enrichedContactsRepo.js";
 
 async function readRawBody(req: IncomingMessage): Promise<string> {
@@ -22,15 +22,16 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 }
 
 type ReqBody = {
-  webhookKey?: string;
-  campaignId?: number;
   leads?: Array<{
     contactId?: number;
+    webhookKey?: string;
+    campaignId?: number;
     linkedin_profile_url?: string;
     csv_firstname?: string;
     csv_companyname?: string;
     csv_email?: string;
     csv_country?: string;
+    csv_jobtitle?: string;
   }>;
 };
 
@@ -45,49 +46,39 @@ export default async function handler(
   try {
     const raw = await readRawBody(req);
     const body = JSON.parse(raw) as ReqBody;
-    const webhookKey = (body.webhookKey ?? "").trim();
-    const campaignId = Number(body.campaignId);
     const leads = Array.isArray(body.leads) ? body.leads : [];
 
-    if (!webhookKey) {
-      sendJson(res, 400, { error: "webhookKey is required" });
-      return;
-    }
-    if (!Number.isFinite(campaignId) || campaignId <= 0) {
-      sendJson(res, 400, { error: "campaignId must be a positive number" });
-      return;
-    }
-
-    const preparedLeads = leads.map((lead) => ({
+    const prepared = leads.map((lead) => ({
       contactId: Number(lead.contactId),
+      webhookKey: (lead.webhookKey ?? "").trim(),
+      campaignId: Number(lead.campaignId),
       linkedin_profile_url: (lead.linkedin_profile_url ?? "").trim(),
       csv_firstname: (lead.csv_firstname ?? "").trim(),
       csv_companyname: (lead.csv_companyname ?? "").trim(),
       csv_email: (lead.csv_email ?? "").trim(),
       csv_country: (lead.csv_country ?? "").trim(),
+      csv_jobtitle: (lead.csv_jobtitle ?? "").trim(),
     }));
 
-    const result = await addLeadsToMeetAlfredCampaign({
-      webhookKey,
-      campaignId,
-      leads: preparedLeads.map((lead) => ({
-        linkedin_profile_url: lead.linkedin_profile_url,
-        csv_firstname: lead.csv_firstname,
-        csv_companyname: lead.csv_companyname,
-        csv_email: lead.csv_email,
-        csv_country: lead.csv_country,
-      })),
-    });
-    const successfulContactIds = result.successIndices
-      .map((index) => preparedLeads[index]?.contactId)
-      .filter((id): id is number => Number.isFinite(id) && id > 0);
-    const marked = await markContactsAddedToMeetAlfred(successfulContactIds);
+    for (const row of prepared) {
+      if (!row.webhookKey) {
+        sendJson(res, 400, { error: "Each lead must include webhookKey" });
+        return;
+      }
+      if (!Number.isFinite(row.campaignId) || row.campaignId <= 0) {
+        sendJson(res, 400, { error: "Each lead must include a positive campaignId" });
+        return;
+      }
+    }
+
+    const result = await sendMeetAlfredBulkLeadsByCampaign(prepared);
+    const marked = await markContactsAddedToMeetAlfred(result.successContactIds);
     sendJson(res, 200, {
       attempted: result.attempted,
       sent: result.sent,
       failed: result.failed,
       marked,
-      markedContactIds: successfulContactIds,
+      markedContactIds: result.successContactIds,
     });
   } catch (error) {
     const message =

@@ -5,6 +5,10 @@ export type MeetAlfredCampaign = {
   webhookKey: string;
 };
 
+function meetAlfredCampaignIsActiveForUi(c: MeetAlfredCampaign): boolean {
+  return String(c.status ?? "").trim().toLowerCase() === "active";
+}
+
 export async function fetchMeetAlfredCampaigns(): Promise<MeetAlfredCampaign[]> {
   const res = await fetch("/api/meet-alfred-campaigns");
   const text = await res.text();
@@ -12,19 +16,22 @@ export async function fetchMeetAlfredCampaigns(): Promise<MeetAlfredCampaign[]> 
     throw new Error(text || `HTTP ${res.status}`);
   }
   const body = JSON.parse(text) as { campaigns?: MeetAlfredCampaign[] };
-  return Array.isArray(body.campaigns) ? body.campaigns : [];
+  const raw = Array.isArray(body.campaigns) ? body.campaigns : [];
+  /** Meet Alfred list API has no filter param; only show active campaigns in the dropdown. */
+  return raw.filter(meetAlfredCampaignIsActiveForUi);
 }
 
 export async function bulkSendMeetAlfred(input: {
-  webhookKey: string;
-  campaignId: number;
   leads: Array<{
     contactId: number;
+    webhookKey: string;
+    campaignId: number;
     linkedin_profile_url: string;
     csv_firstname: string;
     csv_companyname: string;
     csv_email: string;
     csv_country: string;
+    csv_jobtitle: string;
   }>;
 }): Promise<{
   attempted: number;

@@ -1,7 +1,7 @@
 export const config = { runtime: "nodejs" };
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { addLeadsToInstantlyCampaign } from "../lib/instantly.js";
+import { sendInstantlyBulkLeadsByCampaign } from "../lib/instantly.js";
 import { markContactsAddedToInstantly } from "../lib/enrichedContactsRepo.js";
 
 async function readRawBody(req: IncomingMessage): Promise<string> {
@@ -22,9 +22,9 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 }
 
 type ReqBody = {
-  campaignId?: string;
   leads?: Array<{
     contactId?: number;
+    campaignId?: string;
     email?: string;
     first_name?: string;
     company_name?: string;
@@ -47,24 +47,28 @@ export default async function handler(
   try {
     const raw = await readRawBody(req);
     const body = JSON.parse(raw) as ReqBody;
-    const campaignId = (body.campaignId ?? "").trim();
-    if (!campaignId) {
-      sendJson(res, 400, { error: "campaignId is required" });
-      return;
-    }
     const leads = (Array.isArray(body.leads) ? body.leads : [])
       .map((lead) => ({
         contactId: Number(lead.contactId),
+        campaignId: (lead.campaignId ?? "").trim(),
         email: (lead.email ?? "").trim(),
         first_name: (lead.first_name ?? "").trim(),
         company_name: (lead.company_name ?? "").trim(),
       }))
       .filter((lead) => lead.email.length > 0);
 
-    const result = await addLeadsToInstantlyCampaign({
+    for (const row of leads) {
+      if (!row.campaignId) {
+        sendJson(res, 400, { error: "Each lead must include campaignId" });
+        return;
+      }
+    }
+
+    const result = await sendInstantlyBulkLeadsByCampaign({
       apiKey,
-      campaignId,
-      leads: leads.map((lead) => ({
+      rows: leads.map((lead) => ({
+        contactId: lead.contactId,
+        campaignId: lead.campaignId,
         email: lead.email,
         first_name: lead.first_name,
         company_name: lead.company_name,

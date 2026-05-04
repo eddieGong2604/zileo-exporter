@@ -125,3 +125,81 @@ export async function addLeadsToInstantlyCampaign(input: {
       : [],
   };
 }
+
+export type InstantlyBulkLeadRow = InstantlyLeadInput & {
+  contactId: number;
+  campaignId: string;
+};
+
+/** Group rows by Instantly `campaign_id`, call add once per campaign, merge stats and created emails. */
+export async function sendInstantlyBulkLeadsByCampaign(input: {
+  apiKey: string;
+  rows: InstantlyBulkLeadRow[];
+}): Promise<{
+  attempted: number;
+  totalSent: number;
+  leadsUploaded: number;
+  skippedCount: number;
+  invalidEmailCount: number;
+  duplicateEmailCount: number;
+  incompleteCount: number;
+  createdLeadEmails: string[];
+}> {
+  type Group = {
+    campaignId: string;
+    leads: InstantlyLeadInput[];
+    contactIds: number[];
+  };
+  const groupMap = new Map<string, Group>();
+  for (const row of input.rows) {
+    const campaignId = row.campaignId.trim();
+    if (!campaignId) continue;
+    let g = groupMap.get(campaignId);
+    if (!g) {
+      g = { campaignId, leads: [], contactIds: [] };
+      groupMap.set(campaignId, g);
+    }
+    g.leads.push({
+      email: row.email,
+      first_name: row.first_name,
+      company_name: row.company_name,
+    });
+    g.contactIds.push(row.contactId);
+  }
+
+  let attempted = 0;
+  let totalSent = 0;
+  let leadsUploaded = 0;
+  let skippedCount = 0;
+  let invalidEmailCount = 0;
+  let duplicateEmailCount = 0;
+  let incompleteCount = 0;
+  const createdLeadEmails: string[] = [];
+
+  for (const g of groupMap.values()) {
+    const result = await addLeadsToInstantlyCampaign({
+      apiKey: input.apiKey,
+      campaignId: g.campaignId,
+      leads: g.leads,
+    });
+    attempted += result.attempted;
+    totalSent += result.totalSent;
+    leadsUploaded += result.leadsUploaded;
+    skippedCount += result.skippedCount;
+    invalidEmailCount += result.invalidEmailCount;
+    duplicateEmailCount += result.duplicateEmailCount;
+    incompleteCount += result.incompleteCount;
+    createdLeadEmails.push(...result.createdLeadEmails);
+  }
+
+  return {
+    attempted,
+    totalSent,
+    leadsUploaded,
+    skippedCount,
+    invalidEmailCount,
+    duplicateEmailCount,
+    incompleteCount,
+    createdLeadEmails,
+  };
+}

@@ -13,9 +13,9 @@ export async function fetchInstantlyCampaigns(): Promise<InstantlyCampaign[]> {
 }
 
 export async function bulkSendInstantly(input: {
-  campaignId: string;
   leads: Array<{
     contactId: number;
+    campaignId: string;
     email: string;
     first_name: string;
     company_name: string;
@@ -34,7 +34,7 @@ export async function bulkSendInstantly(input: {
   const res = await fetch("/api/instantly-bulk-send", {
     method: "POST",
     headers: { "Content-Type": "application/json", accept: "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ leads: input.leads }),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text || `HTTP ${res.status}`);

@@ -111,13 +111,6 @@ export async function bulkRevealEmailsWithApollo(input: {
         },
       );
       const text = await res.text();
-      log.info("apollo batch response", {
-        batchIndex,
-        batchSize: batch.length,
-        status: res.status,
-        ok: res.ok,
-        responseBody: text,
-      });
       if (!res.ok) {
         log.warn("apollo batch failed", {
           batchIndex,

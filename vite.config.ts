@@ -14,12 +14,9 @@ import {
   updateContactFirstName,
   updateContactEmails,
 } from "./lib/enrichedContactsRepo.js";
-import {
-  addLeadsToMeetAlfredCampaign,
-  listMeetAlfredCampaigns,
-} from "./lib/meetAlfred.js";
+import { listMeetAlfredCampaigns, sendMeetAlfredBulkLeadsByCampaign } from "./lib/meetAlfred.js";
 import { bulkRevealEmailsWithApollo } from "./lib/apolloBulkMatch.js";
-import { addLeadsToInstantlyCampaign, listInstantlyCampaigns } from "./lib/instantly.js";
+import { listInstantlyCampaigns, sendInstantlyBulkLeadsByCampaign } from "./lib/instantly.js";
 
 const devRevealLog = createLogger("vite/reveal-dev-api");
 
@@ -401,6 +398,8 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
             try {
               const url = new URL(req.url ?? "", "http://localhost");
               const sourceCountries = url.searchParams.getAll("sourceCountry");
+              const jobTitles = url.searchParams.getAll("jobTitle");
+              const contactTitles = url.searchParams.getAll("contactTitle");
               const out = await listEnrichedContacts(
                 {
                   status: (url.searchParams.get("status") ?? "all") as
@@ -421,12 +420,16 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                   excludeLocationBlacklisted:
                     url.searchParams.get("excludeLocationBlacklisted") !== "false",
                   excludeNotALead: url.searchParams.get("excludeNotALead") !== "false",
+                  contactNameContainsSpace:
+                    url.searchParams.get("contactNameContainsSpace") === "true",
                   sourceCountries,
                   latestJobPosted: (url.searchParams.get("latestJobPosted") ?? "all") as
                     | "24h"
                     | "3d"
                     | "1w"
                     | "all",
+                  jobTitles,
+                  contactTitles,
                   page: Number(url.searchParams.get("page") ?? 1),
                   limit: Number(url.searchParams.get("limit") ?? 100),
                 },
@@ -486,52 +489,51 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
               try {
                 const raw = Buffer.concat(chunks).toString("utf8");
                 const body = JSON.parse(raw) as {
-                  webhookKey?: string;
-                  campaignId?: number;
                   leads?: Array<{
                     contactId?: number;
+                    webhookKey?: string;
+                    campaignId?: number;
                     linkedin_profile_url?: string;
                     csv_firstname?: string;
                     csv_companyname?: string;
                     csv_email?: string;
                     csv_country?: string;
+                    csv_jobtitle?: string;
                   }>;
                 };
-                const webhookKey = (body.webhookKey ?? "").trim();
-                const campaignId = Number(body.campaignId);
                 const leads = Array.isArray(body.leads) ? body.leads : [];
-                if (!webhookKey) {
-                  res.statusCode = 400;
-                  res.setHeader("Content-Type", "application/json; charset=utf-8");
-                  res.end(JSON.stringify({ error: "webhookKey is required" }));
-                  return;
+                const prepared = leads.map((lead) => ({
+                  contactId: Number(lead.contactId),
+                  webhookKey: (lead.webhookKey ?? "").trim(),
+                  campaignId: Number(lead.campaignId),
+                  linkedin_profile_url: (lead.linkedin_profile_url ?? "").trim(),
+                  csv_firstname: (lead.csv_firstname ?? "").trim(),
+                  csv_companyname: (lead.csv_companyname ?? "").trim(),
+                  csv_email: (lead.csv_email ?? "").trim(),
+                  csv_country: (lead.csv_country ?? "").trim(),
+                  csv_jobtitle: (lead.csv_jobtitle ?? "").trim(),
+                }));
+                for (const row of prepared) {
+                  if (!row.webhookKey) {
+                    res.statusCode = 400;
+                    res.setHeader("Content-Type", "application/json; charset=utf-8");
+                    res.end(JSON.stringify({ error: "Each lead must include webhookKey" }));
+                    return;
+                  }
+                  if (!Number.isFinite(row.campaignId) || row.campaignId <= 0) {
+                    res.statusCode = 400;
+                    res.setHeader("Content-Type", "application/json; charset=utf-8");
+                    res.end(
+                      JSON.stringify({
+                        error: "Each lead must include a positive campaignId",
+                      }),
+                    );
+                    return;
+                  }
                 }
-                if (!Number.isFinite(campaignId) || campaignId <= 0) {
-                  res.statusCode = 400;
-                  res.setHeader("Content-Type", "application/json; charset=utf-8");
-                  res.end(
-                    JSON.stringify({
-                      error: "campaignId must be a positive number",
-                    }),
-                  );
-                  return;
-                }
-                const result = await addLeadsToMeetAlfredCampaign({
-                  webhookKey,
-                  campaignId,
-                  leads: leads.map((lead) => ({
-                    linkedin_profile_url: (lead.linkedin_profile_url ?? "").trim(),
-                    csv_firstname: (lead.csv_firstname ?? "").trim(),
-                    csv_companyname: (lead.csv_companyname ?? "").trim(),
-                    csv_email: (lead.csv_email ?? "").trim(),
-                    csv_country: (lead.csv_country ?? "").trim(),
-                  })),
-                });
-                const successfulContactIds = result.successIndices
-                  .map((index) => Number(leads[index]?.contactId))
-                  .filter((id) => Number.isFinite(id) && id > 0) as number[];
+                const result = await sendMeetAlfredBulkLeadsByCampaign(prepared);
                 const marked = await markContactsAddedToMeetAlfred(
-                  successfulContactIds,
+                  result.successContactIds,
                   env.POSTGRES_URL || env.DATABASE_URL,
                 );
                 res.statusCode = 200;
@@ -542,7 +544,7 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     sent: result.sent,
                     failed: result.failed,
                     marked,
-                    markedContactIds: successfulContactIds,
+                    markedContactIds: result.successContactIds,
                   }),
                 );
               } catch (e) {
@@ -608,33 +610,36 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                 }
                 const raw = Buffer.concat(chunks).toString("utf8");
                 const body = JSON.parse(raw) as {
-                  campaignId?: string;
                   leads?: Array<{
                     contactId?: number;
+                    campaignId?: string;
                     email?: string;
                     first_name?: string;
                     company_name?: string;
                   }>;
                 };
-                const campaignId = (body.campaignId ?? "").trim();
-                if (!campaignId) {
-                  res.statusCode = 400;
-                  res.setHeader("Content-Type", "application/json; charset=utf-8");
-                  res.end(JSON.stringify({ error: "campaignId is required" }));
-                  return;
-                }
                 const leads = (Array.isArray(body.leads) ? body.leads : [])
                   .map((lead) => ({
                     contactId: Number(lead.contactId),
+                    campaignId: (lead.campaignId ?? "").trim(),
                     email: (lead.email ?? "").trim(),
                     first_name: (lead.first_name ?? "").trim(),
                     company_name: (lead.company_name ?? "").trim(),
                   }))
                   .filter((lead) => lead.email.length > 0);
-                const result = await addLeadsToInstantlyCampaign({
+                for (const row of leads) {
+                  if (!row.campaignId) {
+                    res.statusCode = 400;
+                    res.setHeader("Content-Type", "application/json; charset=utf-8");
+                    res.end(JSON.stringify({ error: "Each lead must include campaignId" }));
+                    return;
+                  }
+                }
+                const result = await sendInstantlyBulkLeadsByCampaign({
                   apiKey,
-                  campaignId,
-                  leads: leads.map((lead) => ({
+                  rows: leads.map((lead) => ({
+                    contactId: lead.contactId,
+                    campaignId: lead.campaignId,
                     email: lead.email,
                     first_name: lead.first_name,
                     company_name: lead.company_name,

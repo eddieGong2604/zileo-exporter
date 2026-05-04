@@ -24,6 +24,8 @@ export default async function handler(
   try {
     const url = new URL(req.url ?? "", "http://localhost");
     const sourceCountries = url.searchParams.getAll("sourceCountry");
+    const jobTitles = url.searchParams.getAll("jobTitle");
+    const contactTitles = url.searchParams.getAll("contactTitle");
     const out = await listEnrichedContacts({
       status: (url.searchParams.get("status") ?? "all") as
         | "all"
@@ -42,12 +44,15 @@ export default async function handler(
       excludeLocationBlacklisted:
         url.searchParams.get("excludeLocationBlacklisted") !== "false",
       excludeNotALead: url.searchParams.get("excludeNotALead") !== "false",
+      contactNameContainsSpace: url.searchParams.get("contactNameContainsSpace") === "true",
       sourceCountries,
       latestJobPosted: (url.searchParams.get("latestJobPosted") ?? "all") as
         | "24h"
         | "3d"
         | "1w"
         | "all",
+      jobTitles,
+      contactTitles,
       page: Number(url.searchParams.get("page") ?? 1),
       limit: Number(url.searchParams.get("limit") ?? 100),
     });
