@@ -706,11 +706,13 @@ function companyCountryFromRow(row: EnrichedContact): string {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
+const MEET_ALFRED_US_CAMPAIGN_LABEL = "UnitedStates_JobTitle_Personalise";
 const MEET_ALFRED_UK_CAMPAIGN_LABEL = "UnitedKingdom_JobTitle_Personalise";
 const MEET_ALFRED_AU_CAMPAIGN_LABEL = "Australia_JobTitle_Personalise";
 
 function meetAlfredTargetCampaignLabelForCountry(country: string): string | null {
   const n = country.trim().toLowerCase();
+  if (n === "united states") return MEET_ALFRED_US_CAMPAIGN_LABEL;
   if (n === "united kingdom") return MEET_ALFRED_UK_CAMPAIGN_LABEL;
   if (n === "australia") return MEET_ALFRED_AU_CAMPAIGN_LABEL;
   return null;
@@ -1338,7 +1340,7 @@ export function EnrichedPage() {
       }
       const result = await bulkSendMeetAlfred({ leads });
       const skipNote =
-        skipped.length > 0 ? ` Skipped ${skipped.length} (not UK/AU or missing campaign).` : "";
+        skipped.length > 0 ? ` Skipped ${skipped.length} (not US/UK/AU or missing campaign).` : "";
       setSendResultMessage(
         `Sent ${result.sent}/${result.attempted} leads (failed: ${result.failed}, marked: ${result.marked}).${skipNote}`,
       );
@@ -2326,7 +2328,8 @@ export function EnrichedPage() {
             <div className="filter-modal-body">
               <p className="filter-fieldset-hint">
                 Selected leads: <strong>{selectedCount}</strong>. Campaign is chosen from{" "}
-                <code className="job-title-code">company.source_country</code>: United Kingdom →{" "}
+                <code className="job-title-code">company.source_country</code>: United States →{" "}
+                <strong>{MEET_ALFRED_US_CAMPAIGN_LABEL}</strong>, United Kingdom →{" "}
                 <strong>{MEET_ALFRED_UK_CAMPAIGN_LABEL}</strong>, Australia →{" "}
                 <strong>{MEET_ALFRED_AU_CAMPAIGN_LABEL}</strong>. Other countries are skipped. The{" "}
                 <strong>Job title</strong> column is the exact{" "}

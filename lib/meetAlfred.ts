@@ -6,6 +6,8 @@ const CAMPAIGN_WEBHOOK_KEYS = [
   "X1hYa5GTrl93zdMMInvok3y7VuMBi0i3",
   "XU93kw7Dc2qD43hbQGql1eDyhpvO7CgL",
   "M4oFNExAkUrAEYPCsp6FSo1PXv90yKeD",
+  /** UnitedStates_JobTitle_Personalise and other campaigns on this Meet Alfred workspace */
+  "YSL1SgeAKwc8afMOETEFAt7KmAZ2AnN5",
 ];
 export type MeetAlfredCampaign = {
   id: number;
