@@ -62,6 +62,7 @@ const DEFAULT_SORT_STATE: SortState = {
 const LS_KEYS = {
   groupByCompany: "enriched.groupByCompany",
   statusFilter: "enriched.statusFilter",
+  includeIgnoreForNow: "enriched.includeIgnoreForNow",
   excludeOriginBlacklist: "enriched.excludeOriginBlacklist",
   excludeLocationBlacklist: "enriched.excludeLocationBlacklist",
   excludeNotALead: "enriched.excludeNotALead",
@@ -560,6 +561,7 @@ function filterSummary(
   status: CompanyStatusFilter,
   meetAlfredAddedFilter: MeetAlfredAddedFilter,
   instantlyAddedFilter: InstantlyAddedFilter,
+  includeIgnoreForNow: boolean,
   excludeOriginBlacklist: boolean,
   excludeLocationBlacklist: boolean,
   excludeNotALead: boolean,
@@ -587,6 +589,7 @@ function filterSummary(
         ? "Instantly: added only"
         : "Instantly: not added only",
   );
+  parts.push(includeIgnoreForNow ? "Ignore-for-now: included" : "Ignore-for-now: hidden");
   parts.push(
     excludeOriginBlacklist ? "Origin not blacklisted" : "Any origin blacklist",
   );
@@ -833,6 +836,11 @@ export function EnrichedPage() {
     if (raw === "all" || raw === "added" || raw === "not_added") return raw;
     return "not_added";
   });
+  const [includeIgnoreForNow, setIncludeIgnoreForNow] = useState(() => {
+    const raw = safeReadLocalStorage(LS_KEYS.includeIgnoreForNow);
+    if (raw === "true") return true;
+    return false;
+  });
   const [excludePredictedOriginBlacklist, setExcludePredictedOriginBlacklist] = useState(() => {
     const raw = safeReadLocalStorage(LS_KEYS.excludeOriginBlacklist);
     if (raw === "false") return false;
@@ -946,6 +954,7 @@ export function EnrichedPage() {
         status: statusFilter,
         meetAlfredAdded: meetAlfredAddedFilter,
         instantlyAdded: instantlyAddedFilter,
+        includeIgnoreForNow,
         excludeOriginBlacklisted: excludePredictedOriginBlacklist,
         excludeLocationBlacklisted: excludeContactLocationBlacklist,
         excludeNotALead,
@@ -973,6 +982,7 @@ export function EnrichedPage() {
     statusFilter,
     meetAlfredAddedFilter,
     instantlyAddedFilter,
+    includeIgnoreForNow,
     excludePredictedOriginBlacklist,
     excludeContactLocationBlacklist,
     excludeNotALead,
@@ -1064,6 +1074,10 @@ export function EnrichedPage() {
   }, [instantlyAddedFilter]);
 
   useEffect(() => {
+    safeWriteLocalStorage(LS_KEYS.includeIgnoreForNow, String(includeIgnoreForNow));
+  }, [includeIgnoreForNow]);
+
+  useEffect(() => {
     safeWriteLocalStorage(
       LS_KEYS.excludeOriginBlacklist,
       String(excludePredictedOriginBlacklist),
@@ -1105,6 +1119,7 @@ export function EnrichedPage() {
     statusFilter,
     meetAlfredAddedFilter,
     instantlyAddedFilter,
+    includeIgnoreForNow,
     excludePredictedOriginBlacklist,
     excludeContactLocationBlacklist,
     excludeNotALead,
@@ -1866,6 +1881,7 @@ export function EnrichedPage() {
                 statusFilter,
                 meetAlfredAddedFilter,
                 instantlyAddedFilter,
+                includeIgnoreForNow,
                 excludePredictedOriginBlacklist,
                 excludeContactLocationBlacklist,
                 excludeNotALead,
@@ -1913,6 +1929,7 @@ export function EnrichedPage() {
                   statusFilter,
                   meetAlfredAddedFilter,
                   instantlyAddedFilter,
+                  includeIgnoreForNow,
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
                   excludeNotALead,
@@ -2175,6 +2192,19 @@ export function EnrichedPage() {
                   ))}
                 </div>
               </fieldset>
+              <label className="filter-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={includeIgnoreForNow}
+                  onChange={(e) => setIncludeIgnoreForNow(e.target.checked)}
+                />
+                <span>
+                  Include ignored-for-now companies{" "}
+                  <span className="filter-checkbox-hint">
+                    (show records where company.ignore_for_now is true)
+                  </span>
+                </span>
+              </label>
               <label className="filter-checkbox-row">
                 <input
                   type="checkbox"
@@ -2643,6 +2673,7 @@ export function EnrichedPage() {
                   statusFilter,
                   meetAlfredAddedFilter,
                   instantlyAddedFilter,
+                  includeIgnoreForNow,
                   excludePredictedOriginBlacklist,
                   excludeContactLocationBlacklist,
                   excludeNotALead,

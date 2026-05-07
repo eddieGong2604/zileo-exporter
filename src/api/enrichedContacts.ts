@@ -14,6 +14,7 @@ export type FetchEnrichedContactsInput = {
   status: "all" | "approved" | "queued" | "rejected";
   meetAlfredAdded: "all" | "added" | "not_added";
   instantlyAdded: "all" | "added" | "not_added";
+  includeIgnoreForNow: boolean;
   excludeOriginBlacklisted: boolean;
   excludeLocationBlacklisted: boolean;
   excludeNotALead: boolean;
@@ -36,6 +37,7 @@ export async function fetchEnrichedContacts(
   params.set("status", input.status);
   params.set("meetAlfredAdded", input.meetAlfredAdded);
   params.set("instantlyAdded", input.instantlyAdded);
+  params.set("includeIgnoreForNow", String(input.includeIgnoreForNow));
   params.set("excludeOriginBlacklisted", String(input.excludeOriginBlacklisted));
   params.set("excludeLocationBlacklisted", String(input.excludeLocationBlacklisted));
   params.set("excludeNotALead", String(input.excludeNotALead));

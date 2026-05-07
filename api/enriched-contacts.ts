@@ -40,6 +40,7 @@ export default async function handler(
         | "all"
         | "added"
         | "not_added",
+      includeIgnoreForNow: url.searchParams.get("includeIgnoreForNow") === "true",
       excludeOriginBlacklisted: url.searchParams.get("excludeOriginBlacklisted") !== "false",
       excludeLocationBlacklisted:
         url.searchParams.get("excludeLocationBlacklisted") !== "false",

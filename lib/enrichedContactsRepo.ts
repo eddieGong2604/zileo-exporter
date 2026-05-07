@@ -32,6 +32,7 @@ export type EnrichedServerFilters = {
   status?: "all" | "approved" | "queued" | "rejected";
   meetAlfredAdded?: "all" | "added" | "not_added";
   instantlyAdded?: "all" | "added" | "not_added";
+  includeIgnoreForNow?: boolean;
   excludeOriginBlacklisted?: boolean;
   excludeLocationBlacklisted?: boolean;
   excludeNotALead?: boolean;
@@ -121,8 +122,11 @@ export async function listEnrichedContacts(
 
     const excludeNotALead = filters?.excludeNotALead ?? true;
     if (excludeNotALead) where.push(`COALESCE(ct.not_a_lead, FALSE) IS FALSE`);
-    /** Default behavior: hide companies user marked as "Ignore For Now". */
-    where.push(`COALESCE(cp.ignore_for_now, FALSE) IS FALSE`);
+    const includeIgnoreForNow = filters?.includeIgnoreForNow ?? false;
+    if (!includeIgnoreForNow) {
+      /** Default behavior: hide companies user marked as "Ignore For Now". */
+      where.push(`COALESCE(cp.ignore_for_now, FALSE) IS FALSE`);
+    }
 
     if (filters?.contactNameContainsSpace === true) {
       where.push(`position(' ' IN COALESCE(ct.contact_name, '')) > 0`);

@@ -461,6 +461,8 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                     | "all"
                     | "added"
                     | "not_added",
+                  includeIgnoreForNow:
+                    url.searchParams.get("includeIgnoreForNow") === "true",
                   excludeOriginBlacklisted:
                     url.searchParams.get("excludeOriginBlacklisted") !== "false",
                   excludeLocationBlacklisted:
