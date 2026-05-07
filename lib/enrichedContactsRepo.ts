@@ -121,6 +121,8 @@ export async function listEnrichedContacts(
 
     const excludeNotALead = filters?.excludeNotALead ?? true;
     if (excludeNotALead) where.push(`COALESCE(ct.not_a_lead, FALSE) IS FALSE`);
+    /** Default behavior: hide companies user marked as "Ignore For Now". */
+    where.push(`COALESCE(cp.ignore_for_now, FALSE) IS FALSE`);
 
     if (filters?.contactNameContainsSpace === true) {
       where.push(`position(' ' IN COALESCE(ct.contact_name, '')) > 0`);
@@ -499,6 +501,32 @@ export async function rejectCompany(
     return (res.rowCount ?? 0) > 0;
   } catch (error) {
     log.error("rejectCompany failed", {
+      companyId: input.companyId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function ignoreCompanyForNow(
+  input: { companyId: number },
+  connectionStringOverride?: string,
+): Promise<boolean> {
+  if (!Number.isFinite(input.companyId) || input.companyId <= 0) return false;
+  const client = await getPool(connectionStringOverride).connect();
+  try {
+    const res = await client.query(
+      `UPDATE companies
+       SET ignore_for_now = TRUE,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [input.companyId],
+    );
+    return (res.rowCount ?? 0) > 0;
+  } catch (error) {
+    log.error("ignoreCompanyForNow failed", {
       companyId: input.companyId,
       message: error instanceof Error ? error.message : String(error),
     });

@@ -7,6 +7,7 @@ import { revealCompanyWithOpenAI } from "./lib/revealCompanyOpenAI";
 import { revealCompanyWithTavily } from "./lib/revealCompanyTavily";
 import {
   listEnrichedContacts,
+  ignoreCompanyForNow,
   markContactsAddedToInstantly,
   markContactsAddedToMeetAlfred,
   rejectCompany,
@@ -116,6 +117,51 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                 devRevealLog.error("handler error", { pathname, msg });
                 res.statusCode = 502;
                 res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: msg }));
+              }
+            })();
+          });
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (req.method !== "POST" || pathname !== "/api/company-ignore-for-now") {
+            next();
+            return;
+          }
+          const chunks: Buffer[] = [];
+          req.on("data", (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          req.on("end", () => {
+            void (async () => {
+              try {
+                const raw = Buffer.concat(chunks).toString("utf8");
+                const body = JSON.parse(raw) as {
+                  companyId?: number;
+                };
+                const companyId = Number(body.companyId);
+                if (!Number.isFinite(companyId) || companyId <= 0) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json; charset=utf-8");
+                  res.end(
+                    JSON.stringify({ error: "companyId must be a positive number" }),
+                  );
+                  return;
+                }
+                const ok = await ignoreCompanyForNow(
+                  { companyId },
+                  env.POSTGRES_URL || env.DATABASE_URL,
+                );
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ ok }));
+              } catch (e) {
+                const msg =
+                  e instanceof Error ? e.message : "Failed to ignore company for now";
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json; charset=utf-8");
                 res.end(JSON.stringify({ error: msg }));
               }
             })();

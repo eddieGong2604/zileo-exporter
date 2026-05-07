@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dayjs from "dayjs";
 import { marked } from "marked";
 import { bulkRevealEmails } from "../api/apolloBulkReveal";
+import { ignoreCompanyForNow as ignoreCompanyForNowApi } from "../api/companyIgnoreForNow";
 import { rejectCompany as rejectCompanyApi } from "../api/companyReject";
 import {
   updateContactField,
@@ -911,6 +912,7 @@ export function EnrichedPage() {
   const [savingCellKeys, setSavingCellKeys] = useState<Set<string>>(new Set());
   const [rejectOpenCompanyId, setRejectOpenCompanyId] = useState<number | null>(null);
   const [rejectingCompanyId, setRejectingCompanyId] = useState<number | null>(null);
+  const [ignoringCompanyId, setIgnoringCompanyId] = useState<number | null>(null);
   const [draggingColumnKey, setDraggingColumnKey] = useState<string | null>(null);
   const rejectReasonInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const editTextInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -1596,6 +1598,31 @@ export function EnrichedPage() {
       setError(e instanceof Error ? e.message : "Failed to reject company");
     } finally {
       setRejectingCompanyId(null);
+    }
+  };
+
+  const submitIgnoreCompanyForNow = async (companyId: number) => {
+    setIgnoringCompanyId(companyId);
+    setError(null);
+    try {
+      await ignoreCompanyForNowApi({ companyId });
+      setRejectOpenCompanyId((current) => (current === companyId ? null : current));
+      setRows((prev) => {
+        const next = prev.filter((row) => {
+          const rowCompanyId = row.company?.id ?? row.companyId;
+          return rowCompanyId !== companyId;
+        });
+        const removedCount = prev.length - next.length;
+        if (removedCount > 0) {
+          setTotalContacts((current) => Math.max(0, current - removedCount));
+          setTotalCompanies((current) => Math.max(0, current - 1));
+        }
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to ignore company for now");
+    } finally {
+      setIgnoringCompanyId(null);
     }
   };
 
@@ -2702,17 +2729,30 @@ export function EnrichedPage() {
                       : null;
                   if (!companyId) return null;
                   const isOpen = rejectOpenCompanyId === companyId;
-                  const isSaving = rejectingCompanyId === companyId;
+                  const isSavingReject = rejectingCompanyId === companyId;
+                  const isSavingIgnore = ignoringCompanyId === companyId;
+                  const isSavingAny = isSavingReject || isSavingIgnore;
                   return (
                     <div className="group-company-actions">
                       {!isOpen ? (
-                        <button
-                          type="button"
-                          className="column-btn btn-reject-company"
-                          onClick={() => setRejectOpenCompanyId(companyId)}
-                        >
-                          Reject
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="column-btn btn-reject-company"
+                            onClick={() => setRejectOpenCompanyId(companyId)}
+                            disabled={isSavingAny}
+                          >
+                            Reject
+                          </button>
+                          <button
+                            type="button"
+                            className="column-btn"
+                            onClick={() => void submitIgnoreCompanyForNow(companyId)}
+                            disabled={isSavingAny}
+                          >
+                            {isSavingIgnore ? "Ignoring..." : "Ignore For Now"}
+                          </button>
+                        </>
                       ) : (
                         <div className="reject-inline-form">
                           <input
@@ -2726,16 +2766,16 @@ export function EnrichedPage() {
                           <button
                             type="button"
                             className="inline-edit-save-btn"
-                            disabled={isSaving}
+                            disabled={isSavingAny}
                             onClick={() => void submitRejectCompany(companyId)}
                           >
-                            {isSaving ? "Saving..." : "Submit"}
+                            {isSavingReject ? "Saving..." : "Submit"}
                           </button>
                           <button
                             type="button"
                             className="btn-secondary"
                             onClick={() => setRejectOpenCompanyId(null)}
-                            disabled={isSaving}
+                            disabled={isSavingAny}
                           >
                             Cancel
                           </button>
