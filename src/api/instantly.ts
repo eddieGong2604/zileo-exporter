@@ -19,6 +19,7 @@ export async function bulkSendInstantly(input: {
     email: string;
     first_name: string;
     company_name: string;
+    job_title: string;
   }>;
 }): Promise<{
   attempted: number;

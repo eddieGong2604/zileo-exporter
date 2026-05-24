@@ -20,6 +20,8 @@ export type InstantlyLeadInput = {
   email: string;
   first_name: string;
   company_name: string;
+  /** Custom variable for templates/personalization on Instantly side. */
+  job_title: string;
 };
 
 type InstantlyAddLeadsResponse = {
@@ -86,6 +88,17 @@ export async function addLeadsToInstantlyCampaign(input: {
       createdLeadEmails: [],
     };
   }
+  const requestPayload = {
+    leads: input.leads,
+    campaign_id: input.campaignId,
+    skip_if_in_campaign: true,
+  };
+  log.info("addLeadsToInstantlyCampaign request payload", {
+    campaignId: input.campaignId,
+    attempted,
+    payload: requestPayload,
+    payloadJson: JSON.stringify(requestPayload),
+  });
   const res = await fetch("https://api.instantly.ai/api/v2/leads/add", {
     method: "POST",
     headers: {
@@ -93,11 +106,7 @@ export async function addLeadsToInstantlyCampaign(input: {
       "Content-Type": "application/json",
       accept: "application/json",
     },
-    body: JSON.stringify({
-      leads: input.leads,
-      campaign_id: input.campaignId,
-      skip_if_in_campaign: true,
-    }),
+    body: JSON.stringify(requestPayload),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -163,6 +172,7 @@ export async function sendInstantlyBulkLeadsByCampaign(input: {
       email: row.email,
       first_name: row.first_name,
       company_name: row.company_name,
+      job_title: row.job_title,
     });
     g.contactIds.push(row.contactId);
   }

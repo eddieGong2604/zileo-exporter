@@ -1432,6 +1432,7 @@ export function EnrichedPage() {
         email: string;
         first_name: string;
         company_name: string;
+        job_title: string;
       }> = [];
       for (const row of eligibleRows) {
         const country = companyCountryFromRow(row);
@@ -1451,6 +1452,7 @@ export function EnrichedPage() {
           email: (row.email ?? "").trim(),
           first_name: firstNameFromRow(row),
           company_name: companyNameFromRow(row),
+          job_title: csvJobtitleForMeetAlfredRow(row, jobTitleApplied),
         });
       }
       if (leads.length === 0) {

@@ -28,6 +28,7 @@ type ReqBody = {
     email?: string;
     first_name?: string;
     company_name?: string;
+    job_title?: string;
   }>;
 };
 
@@ -54,6 +55,7 @@ export default async function handler(
         email: (lead.email ?? "").trim(),
         first_name: (lead.first_name ?? "").trim(),
         company_name: (lead.company_name ?? "").trim(),
+        job_title: (lead.job_title ?? "").trim(),
       }))
       .filter((lead) => lead.email.length > 0);
 
@@ -72,6 +74,7 @@ export default async function handler(
         email: lead.email,
         first_name: lead.first_name,
         company_name: lead.company_name,
+        job_title: lead.job_title,
       })),
     });
     const byEmail = new Map<string, number>();
