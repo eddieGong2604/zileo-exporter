@@ -5,12 +5,11 @@ const log = createLogger("lib/meetAlfred");
 const CAMPAIGN_WEBHOOK_KEYS = [
   "X1hYa5GTrl93zdMMInvok3y7VuMBi0i3",
   "XU93kw7Dc2qD43hbQGql1eDyhpvO7CgL",
-  "M4oFNExAkUrAEYPCsp6FSo1PXv90yKeD",
   /** UnitedStates_JobTitle_Personalise and other campaigns on this Meet Alfred workspace */
   "YSL1SgeAKwc8afMOETEFAt7KmAZ2AnN5",
   /** Additional Meet Alfred workspaces for extra Australia/UnitedKingdom/UnitedStates campaigns */
-  "hzXRpj5WYQazHXEEsXHpjYsbKeJCR5xq",
-  "OYhleoZYxUgXGjzf7EYqiSj3GZMgKxWl",
+  "hzXRpj5WYQazHXEEsXHpjYsbKeJCR5xq", //Quynh
+  "OYhleoZYxUgXGjzf7EYqiSj3GZMgKxWl", //VinhNguyen
 ];
 export type MeetAlfredCampaign = {
   id: number;
