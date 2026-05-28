@@ -710,35 +710,113 @@ function companyCountryFromRow(row: EnrichedContact): string {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
-const MEET_ALFRED_US_CAMPAIGN_LABEL = "UnitedStates_JobTitle_Personalise";
-const MEET_ALFRED_UK_CAMPAIGN_LABEL = "UnitedKingdom_JobTitle_Personalise";
-const MEET_ALFRED_AU_CAMPAIGN_LABEL = "Australia_JobTitle_Personalise";
+/**
+ * Meet Alfred campaign labels are matched by country **prefix** (case-insensitive). A workspace can
+ * have multiple campaigns starting with the same country prefix (e.g. `Australia_JobTitle_Personalise`,
+ * `Australia_JobTitle_Personalise_v2`) — selected leads for that country are distributed equally
+ * (round-robin) across all matching campaigns.
+ */
+const MEET_ALFRED_US_CAMPAIGN_PREFIX = "UnitedStates";
+const MEET_ALFRED_UK_CAMPAIGN_PREFIX = "UnitedKingdom";
+const MEET_ALFRED_AU_CAMPAIGN_PREFIX = "Australia";
 
-function meetAlfredTargetCampaignLabelForCountry(country: string): string | null {
+function meetAlfredTargetCampaignPrefixForCountry(country: string): string | null {
   const n = country.trim().toLowerCase();
-  if (n === "united states") return MEET_ALFRED_US_CAMPAIGN_LABEL;
-  if (n === "united kingdom") return MEET_ALFRED_UK_CAMPAIGN_LABEL;
-  if (n === "australia") return MEET_ALFRED_AU_CAMPAIGN_LABEL;
+  if (n === "united states") return MEET_ALFRED_US_CAMPAIGN_PREFIX;
+  if (n === "united kingdom") return MEET_ALFRED_UK_CAMPAIGN_PREFIX;
+  if (n === "australia") return MEET_ALFRED_AU_CAMPAIGN_PREFIX;
   return null;
 }
 
-function findMeetAlfredCampaignByLabel(
+/** Sort by label then id so round-robin order is stable across renders/sends. */
+function findMeetAlfredCampaignsByLabelPrefix(
   list: MeetAlfredCampaign[],
-  label: string,
-): MeetAlfredCampaign | null {
-  const want = label.trim().toLowerCase();
-  return list.find((c) => c.label.trim().toLowerCase() === want) ?? null;
+  prefix: string,
+): MeetAlfredCampaign[] {
+  const p = prefix.trim().toLowerCase();
+  return [...list]
+    .filter((c) => c.label.trim().toLowerCase().startsWith(p))
+    .sort((a, b) => a.label.localeCompare(b.label) || a.id - b.id);
 }
 
-function meetAlfredCampaignPreviewForRow(
-  row: EnrichedContact,
-  list: MeetAlfredCampaign[],
+export type MeetAlfredRowAssignment =
+  | { kind: "campaign"; campaign: MeetAlfredCampaign }
+  | { kind: "skipped"; reason: string };
+
+/** Round-robin distribute rows of each target country across all campaigns starting with that country prefix. */
+function buildMeetAlfredAssignments(
+  rows: EnrichedContact[],
+  campaigns: MeetAlfredCampaign[],
+): Map<EnrichedContact, MeetAlfredRowAssignment> {
+  const assignments = new Map<EnrichedContact, MeetAlfredRowAssignment>();
+  const matchedByPrefix = new Map<string, MeetAlfredCampaign[]>();
+  const countersByPrefix = new Map<string, number>();
+  for (const row of rows) {
+    const country = companyCountryFromRow(row);
+    const prefix = meetAlfredTargetCampaignPrefixForCountry(country);
+    if (!prefix) {
+      assignments.set(row, {
+        kind: "skipped",
+        reason: country ? `not US/UK/AU (${country})` : "no country",
+      });
+      continue;
+    }
+    let list = matchedByPrefix.get(prefix);
+    if (!list) {
+      list = findMeetAlfredCampaignsByLabelPrefix(campaigns, prefix);
+      matchedByPrefix.set(prefix, list);
+    }
+    if (list.length === 0) {
+      assignments.set(row, {
+        kind: "skipped",
+        reason: `no campaign starting with "${prefix}"`,
+      });
+      continue;
+    }
+    const i = countersByPrefix.get(prefix) ?? 0;
+    countersByPrefix.set(prefix, i + 1);
+    const campaign = list[i % list.length]!;
+    assignments.set(row, { kind: "campaign", campaign });
+  }
+  return assignments;
+}
+
+function meetAlfredAssignmentSummary(
+  rows: EnrichedContact[],
+  campaigns: MeetAlfredCampaign[],
 ): string {
-  const country = companyCountryFromRow(row);
-  const targetLabel = meetAlfredTargetCampaignLabelForCountry(country);
-  if (!targetLabel) return "—";
-  const c = findMeetAlfredCampaignByLabel(list, targetLabel);
-  return c ? `${c.label} (id ${c.id})` : `Missing: ${targetLabel}`;
+  const totalsByPrefix = new Map<string, number>();
+  for (const row of rows) {
+    const prefix = meetAlfredTargetCampaignPrefixForCountry(companyCountryFromRow(row));
+    if (!prefix) continue;
+    totalsByPrefix.set(prefix, (totalsByPrefix.get(prefix) ?? 0) + 1);
+  }
+  const countsByCampaign = new Map<number, number>();
+  const assignments = buildMeetAlfredAssignments(rows, campaigns);
+  for (const a of assignments.values()) {
+    if (a.kind !== "campaign") continue;
+    countsByCampaign.set(a.campaign.id, (countsByCampaign.get(a.campaign.id) ?? 0) + 1);
+  }
+  const orderedPrefixes = [
+    MEET_ALFRED_US_CAMPAIGN_PREFIX,
+    MEET_ALFRED_UK_CAMPAIGN_PREFIX,
+    MEET_ALFRED_AU_CAMPAIGN_PREFIX,
+  ];
+  const parts: string[] = [];
+  for (const prefix of orderedPrefixes) {
+    const total = totalsByPrefix.get(prefix) ?? 0;
+    if (total === 0) continue;
+    const matched = findMeetAlfredCampaignsByLabelPrefix(campaigns, prefix);
+    if (matched.length === 0) {
+      parts.push(`${prefix}: ${total} leads → no matching campaign`);
+      continue;
+    }
+    const breakdown = matched
+      .map((c) => `${c.label} (id ${c.id}): ${countsByCampaign.get(c.id) ?? 0}`)
+      .join(", ");
+    parts.push(`${prefix}: ${total} leads → ${matched.length} campaign${matched.length === 1 ? "" : "s"} [${breakdown}]`);
+  }
+  return parts.join(" · ");
 }
 
 const INSTANTLY_US_CAMPAIGN_NAME = "US_Campaign";
@@ -1323,22 +1401,18 @@ export function EnrichedPage() {
         csv_country: string;
         csv_jobtitle: string;
       }> = [];
+      const assignments = buildMeetAlfredAssignments(selectedRows, campaigns);
       for (const row of selectedRows) {
         const country = companyCountryFromRow(row);
-        const targetLabel = meetAlfredTargetCampaignLabelForCountry(country);
-        if (!targetLabel) {
-          skipped.push(`#${row.id ?? "?"} (${country || "no country"})`);
-          continue;
-        }
-        const campaign = findMeetAlfredCampaignByLabel(campaigns, targetLabel);
-        if (!campaign) {
-          skipped.push(`#${row.id ?? "?"} (campaign "${targetLabel}" not found)`);
+        const assignment = assignments.get(row);
+        if (!assignment || assignment.kind === "skipped") {
+          skipped.push(`#${row.id ?? "?"} (${assignment?.kind === "skipped" ? assignment.reason : "no assignment"})`);
           continue;
         }
         leads.push({
           contactId: Number(row.id ?? 0),
-          webhookKey: campaign.webhookKey,
-          campaignId: campaign.id,
+          webhookKey: assignment.campaign.webhookKey,
+          campaignId: assignment.campaign.id,
           linkedin_profile_url: (row.contactLinkedin ?? "").trim(),
           csv_firstname: firstNameFromRow(row),
           csv_companyname: companyNameFromRow(row),
@@ -2386,58 +2460,87 @@ export function EnrichedPage() {
             </div>
             <div className="filter-modal-body">
               <p className="filter-fieldset-hint">
-                Selected leads: <strong>{selectedCount}</strong>. Campaign is chosen from{" "}
-                <code className="job-title-code">company.source_country</code>: United States →{" "}
-                <strong>{MEET_ALFRED_US_CAMPAIGN_LABEL}</strong>, United Kingdom →{" "}
-                <strong>{MEET_ALFRED_UK_CAMPAIGN_LABEL}</strong>, Australia →{" "}
-                <strong>{MEET_ALFRED_AU_CAMPAIGN_LABEL}</strong>. Other countries are skipped. The{" "}
-                <strong>Job title</strong> column is the exact{" "}
+                Selected leads: <strong>{selectedCount}</strong>. The target campaign is matched from{" "}
+                <code className="job-title-code">company.source_country</code> by label prefix:
+                United States → campaigns starting with{" "}
+                <strong>{MEET_ALFRED_US_CAMPAIGN_PREFIX}</strong>, United Kingdom →{" "}
+                <strong>{MEET_ALFRED_UK_CAMPAIGN_PREFIX}</strong>, Australia →{" "}
+                <strong>{MEET_ALFRED_AU_CAMPAIGN_PREFIX}</strong>. Other countries are skipped. When
+                more than one campaign matches a country, selected leads for that country are
+                distributed equally (round-robin) across all matching campaigns. The{" "}
+                <strong>Meet Alfred campaign</strong> column below shows the exact target campaign
+                each lead will be sent to. The <strong>Job title</strong> column is the exact{" "}
                 <code className="job-title-code">csv_jobtitle</code> payload (from{" "}
                 <code className="job-title-code">all_jobs</code>, using your applied job-title filter
                 on this page). Emojis are removed; balanced ASCII <code className="job-title-code">()</code>{" "}
                 segments (with contents) are stripped, then any remaining <code className="job-title-code">(</code>{" "}
                 or <code className="job-title-code">)</code> characters are removed before send.
               </p>
-              {selectedRowsForActions.length > 0 && (
-                <div className="meet-alfred-preview-wrap">
-                  <table className="meet-alfred-preview-table">
-                    <thead>
-                      <tr>
-                        <th>LinkedIn URL</th>
-                        <th>First Name</th>
-                        <th>Company Name</th>
-                        <th>Email</th>
-                        <th>Country</th>
-                        <th>Job title</th>
-                        <th>Meet Alfred campaign</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedRowsForActions.map((row) => {
-                        const csvJobtitle = csvJobtitleForMeetAlfredRow(
-                          row,
-                          jobTitleApplied,
-                        ).trim();
-                        return (
-                          <tr key={`preview-${selectionKeyForRow(row)}`}>
-                            <td>{(row.contactLinkedin ?? "").trim() || "—"}</td>
-                            <td>{firstNameFromRow(row) || "—"}</td>
-                            <td>{companyNameFromRow(row) || "—"}</td>
-                            <td>{(row.email ?? "").trim() || "—"}</td>
-                            <td>{companyCountryFromRow(row) || "—"}</td>
-                            <td>{csvJobtitle || "—"}</td>
-                            <td>
-                              {campaignsLoading
-                                ? "…"
-                                : meetAlfredCampaignPreviewForRow(row, campaigns)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {selectedRowsForActions.length > 0 &&
+                !campaignsLoading &&
+                (() => {
+                  const summary = meetAlfredAssignmentSummary(
+                    selectedRowsForActions,
+                    campaigns,
+                  );
+                  return summary ? (
+                    <div className="meta-bar">Distribution — {summary}</div>
+                  ) : null;
+                })()}
+              {selectedRowsForActions.length > 0 && (() => {
+                const assignments = campaignsLoading
+                  ? null
+                  : buildMeetAlfredAssignments(selectedRowsForActions, campaigns);
+                return (
+                  <div className="meet-alfred-preview-wrap">
+                    <table className="meet-alfred-preview-table">
+                      <thead>
+                        <tr>
+                          <th>LinkedIn URL</th>
+                          <th>First Name</th>
+                          <th>Company Name</th>
+                          <th>Email</th>
+                          <th>Country</th>
+                          <th>Job title</th>
+                          <th>Meet Alfred campaign</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedRowsForActions.map((row) => {
+                          const csvJobtitle = csvJobtitleForMeetAlfredRow(
+                            row,
+                            jobTitleApplied,
+                          ).trim();
+                          let campaignCell: string;
+                          if (campaignsLoading || !assignments) {
+                            campaignCell = "…";
+                          } else {
+                            const a = assignments.get(row);
+                            if (!a) {
+                              campaignCell = "—";
+                            } else if (a.kind === "skipped") {
+                              campaignCell = `Skipped: ${a.reason}`;
+                            } else {
+                              campaignCell = `${a.campaign.label} (id ${a.campaign.id})`;
+                            }
+                          }
+                          return (
+                            <tr key={`preview-${selectionKeyForRow(row)}`}>
+                              <td>{(row.contactLinkedin ?? "").trim() || "—"}</td>
+                              <td>{firstNameFromRow(row) || "—"}</td>
+                              <td>{companyNameFromRow(row) || "—"}</td>
+                              <td>{(row.email ?? "").trim() || "—"}</td>
+                              <td>{companyCountryFromRow(row) || "—"}</td>
+                              <td>{csvJobtitle || "—"}</td>
+                              <td>{campaignCell}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
               {campaignsLoading && <div className="meta-filter-hint">Loading campaigns...</div>}
               {campaignsError && <div className="error">{campaignsError}</div>}
               {sendResultMessage && <div className="meta-bar">{sendResultMessage}</div>}
