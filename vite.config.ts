@@ -16,6 +16,7 @@ import {
   updateContactEmails,
 } from "./lib/enrichedContactsRepo.js";
 import { listMeetAlfredCampaigns, sendMeetAlfredBulkLeadsByCampaign } from "./lib/meetAlfred.js";
+import { runMeetAlfredAutoSend } from "./lib/meetAlfredAutoSend.js";
 import { bulkRevealEmailsWithApollo } from "./lib/apolloBulkMatch.js";
 import { listInstantlyCampaigns, sendInstantlyBulkLeadsByCampaign } from "./lib/instantly.js";
 
@@ -514,6 +515,42 @@ function revealDevApiPlugin(env: Record<string, string>): Plugin {
                 e instanceof Error
                   ? e.message
                   : "Failed to load Meet Alfred campaigns";
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify({ error: msg }));
+            }
+          })();
+        },
+      );
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+          const pathname = req.url?.split("?")[0] ?? "";
+          if (
+            (req.method !== "GET" && req.method !== "POST") ||
+            pathname !== "/api/cron-meet-alfred-auto-send"
+          ) {
+            next();
+            return;
+          }
+          const secret = (env.CRON_SECRET ?? "").trim();
+          const auth = (req.headers.authorization ?? "").trim();
+          if (!secret || auth !== `Bearer ${secret}`) {
+            res.statusCode = 401;
+            res.setHeader("Content-Type", "application/json; charset=utf-8");
+            res.end(JSON.stringify({ error: "Unauthorized" }));
+            return;
+          }
+          void (async () => {
+            try {
+              const result = await runMeetAlfredAutoSend({
+                connectionStringOverride: env.POSTGRES_URL || env.DATABASE_URL,
+              });
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              res.end(JSON.stringify(result));
+            } catch (e) {
+              const msg =
+                e instanceof Error ? e.message : "Meet Alfred auto-send cron failed";
               res.statusCode = 500;
               res.setHeader("Content-Type", "application/json; charset=utf-8");
               res.end(JSON.stringify({ error: msg }));

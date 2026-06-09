@@ -82,6 +82,7 @@ const SOURCE_COUNTRY_OPTIONS = [
   "United States",
   "United Kingdom",
 ] as const;
+const ENRICHED_CONTACTS_PAGE_SIZE = 100;
 
 const DEFAULT_SOURCE_COUNTRY_SELECTION = new Set<string>(["Australia"]);
 
@@ -976,6 +977,10 @@ export function EnrichedPage() {
   const [totalCompanies, setTotalCompanies] = useState(0);
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(new Set());
+  const [selectedRowsByKey, setSelectedRowsByKey] = useState<Map<string, EnrichedContact>>(
+    new Map(),
+  );
+  const [selectingAllPages, setSelectingAllPages] = useState(false);
   const [csvExportModalOpen, setCsvExportModalOpen] = useState(false);
   const [csvExportSelectedColumnKeys, setCsvExportSelectedColumnKeys] = useState<Set<string>>(
     new Set(),
@@ -1042,7 +1047,7 @@ export function EnrichedPage() {
         jobTitles: parseMultiTitleFilterInput(jobTitleApplied),
         contactTitles: parseMultiTitleFilterInput(contactTitleApplied),
         page,
-        limit: 100,
+        limit: ENRICHED_CONTACTS_PAGE_SIZE,
       });
       setRows(body.data);
       setTotalContacts(body.meta.totalContacts);
@@ -1209,6 +1214,24 @@ export function EnrichedPage() {
   ]);
 
   useEffect(() => {
+    setSelectedRowKeys(new Set());
+    setSelectedRowsByKey(new Map());
+  }, [
+    statusFilter,
+    meetAlfredAddedFilter,
+    instantlyAddedFilter,
+    includeIgnoreForNow,
+    excludePredictedOriginBlacklist,
+    excludeContactLocationBlacklist,
+    excludeNotALead,
+    contactNameContainsSpace,
+    sourceCountrySelection,
+    latestJobPostedFilter,
+    jobTitleApplied,
+    contactTitleApplied,
+  ]);
+
+  useEffect(() => {
     if (!initializedVisibleColumns) return;
     safeWriteLocalStorage(
       LS_KEYS.visibleColumns,
@@ -1273,15 +1296,34 @@ export function EnrichedPage() {
   };
 
   useEffect(() => {
-    const validKeys = new Set(sortedRows.map(selectionKeyForRow));
-    setSelectedRowKeys((prev) => {
-      const next = new Set<string>();
-      for (const key of prev) {
-        if (validKeys.has(key)) next.add(key);
+    setSelectedRowsByKey((prev) => {
+      if (selectedRowKeys.size === 0) return prev.size === 0 ? prev : new Map();
+      let changed = false;
+      const next = new Map(prev);
+      for (const row of sortedRows) {
+        const key = selectionKeyForRow(row);
+        if (!selectedRowKeys.has(key)) continue;
+        if (next.get(key) !== row) {
+          next.set(key, row);
+          changed = true;
+        }
       }
-      return next;
+      return changed ? next : prev;
     });
-  }, [sortedRows]);
+  }, [sortedRows, selectedRowKeys]);
+
+  useEffect(() => {
+    setSelectedRowsByKey((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Map<string, EnrichedContact>();
+      for (const [key, row] of prev) {
+        if (selectedRowKeys.has(key)) next.set(key, row);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [selectedRowKeys]);
 
   const allFilteredSelected =
     sortedRows.length > 0 && sortedRows.every((row) => selectedRowKeys.has(selectionKeyForRow(row)));
@@ -1306,11 +1348,20 @@ export function EnrichedPage() {
     }));
   }, [groupByCompany, sortedRows]);
 
-  const selectedRowsForActions = useMemo(
-    () => sortedRows.filter((row) => selectedRowKeys.has(selectionKeyForRow(row))),
-    [sortedRows, selectedRowKeys],
-  );
-  const totalPages = Math.max(1, Math.ceil(totalContacts / 100));
+  const sortedRowsByKey = useMemo(() => {
+    const m = new Map<string, EnrichedContact>();
+    for (const row of sortedRows) m.set(selectionKeyForRow(row), row);
+    return m;
+  }, [sortedRows]);
+  const selectedRowsForActions = useMemo(() => {
+    const selected: EnrichedContact[] = [];
+    for (const key of selectedRowKeys) {
+      const row = selectedRowsByKey.get(key) ?? sortedRowsByKey.get(key);
+      if (row) selected.push(row);
+    }
+    return selected;
+  }, [selectedRowKeys, selectedRowsByKey, sortedRowsByKey]);
+  const totalPages = Math.max(1, Math.ceil(totalContacts / ENRICHED_CONTACTS_PAGE_SIZE));
 
   const toggleSort = (columnKey: string) => {
     setSortState((prev) => {
@@ -1328,14 +1379,19 @@ export function EnrichedPage() {
       else next.add(key);
       return next;
     });
+    setSelectedRowsByKey((prev) => {
+      const next = new Map(prev);
+      if (next.has(key)) next.delete(key);
+      else next.set(key, row);
+      return next;
+    });
   };
 
   const toggleSelectAllFiltered = () => {
+    const keys = sortedRows.map(selectionKeyForRow);
+    const currentlyAllSelected = keys.length > 0 && keys.every((key) => selectedRowKeys.has(key));
     setSelectedRowKeys((prev) => {
       const next = new Set(prev);
-      const keys = sortedRows.map(selectionKeyForRow);
-      const currentlyAllSelected =
-        keys.length > 0 && keys.every((key) => next.has(key));
       if (currentlyAllSelected) {
         for (const key of keys) next.delete(key);
       } else {
@@ -1343,6 +1399,62 @@ export function EnrichedPage() {
       }
       return next;
     });
+    setSelectedRowsByKey((prev) => {
+      const next = new Map(prev);
+      if (currentlyAllSelected) {
+        for (const key of keys) next.delete(key);
+      } else {
+        for (const row of sortedRows) next.set(selectionKeyForRow(row), row);
+      }
+      return next;
+    });
+  };
+
+  const selectAllFromAllPages = async () => {
+    setSelectingAllPages(true);
+    setError(null);
+    try {
+      const jobTitles = parseMultiTitleFilterInput(jobTitleApplied);
+      const contactTitles = parseMultiTitleFilterInput(contactTitleApplied);
+      const baseInput = {
+        status: statusFilter,
+        meetAlfredAdded: meetAlfredAddedFilter,
+        instantlyAdded: instantlyAddedFilter,
+        includeIgnoreForNow,
+        excludeOriginBlacklisted: excludePredictedOriginBlacklist,
+        excludeLocationBlacklisted: excludeContactLocationBlacklist,
+        excludeNotALead,
+        contactNameContainsSpace,
+        sourceCountries: Array.from(sourceCountrySelection),
+        latestJobPosted: latestJobPostedFilter,
+        jobTitles,
+        contactTitles,
+        limit: ENRICHED_CONTACTS_PAGE_SIZE,
+      } as const;
+      const first = await fetchEnrichedContacts({ ...baseInput, page: 1 });
+      const allRows = [...first.data];
+      const totalPageCount = Math.max(
+        1,
+        Math.ceil(first.meta.totalContacts / ENRICHED_CONTACTS_PAGE_SIZE),
+      );
+      for (let p = 2; p <= totalPageCount; p += 1) {
+        const next = await fetchEnrichedContacts({ ...baseInput, page: p });
+        allRows.push(...next.data);
+      }
+      const keys = new Set<string>();
+      const map = new Map<string, EnrichedContact>();
+      for (const row of allRows) {
+        const key = selectionKeyForRow(row);
+        keys.add(key);
+        map.set(key, row);
+      }
+      setSelectedRowKeys(keys);
+      setSelectedRowsByKey(map);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to select all rows from all pages");
+    } finally {
+      setSelectingAllPages(false);
+    }
   };
 
   const openCsvExportModal = () => {
@@ -1351,9 +1463,7 @@ export function EnrichedPage() {
   };
 
   const exportSelectedRowsWithChosenColumns = () => {
-    const selectedRows = sortedRows.filter((row) =>
-      selectedRowKeys.has(selectionKeyForRow(row)),
-    );
+    const selectedRows = selectedRowsForActions;
     if (!selectedRows.length) return;
     const selectedColumns = columns.filter((column) =>
       csvExportSelectedColumnKeys.has(column.key),
@@ -2023,6 +2133,14 @@ export function EnrichedPage() {
               </span>
               <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
                 {allFilteredSelected ? "Unselect all" : "Select all"}
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={loading || selectingAllPages || totalContacts === 0}
+                onClick={() => void selectAllFromAllPages()}
+              >
+                {selectingAllPages ? "Selecting all pages..." : "Select All From All Pages"}
               </button>
               <span className="selection-cart">
                 Page <strong>{page}</strong> / {totalPages}
@@ -2796,6 +2914,14 @@ export function EnrichedPage() {
               </span>
               <button type="button" className="column-btn" onClick={toggleSelectAllFiltered}>
                 {allFilteredSelected ? "Unselect all" : "Select all"}
+              </button>
+              <button
+                type="button"
+                className="column-btn"
+                disabled={loading || selectingAllPages || totalContacts === 0}
+                onClick={() => void selectAllFromAllPages()}
+              >
+                {selectingAllPages ? "Selecting all pages..." : "Select All From All Pages"}
               </button>
               <span className="selection-cart">
                 Page <strong>{page}</strong> / {totalPages}

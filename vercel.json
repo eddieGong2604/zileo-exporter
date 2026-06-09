@@ -4,6 +4,17 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/cron-meet-alfred-auto-send",
+      "schedule": "0 * * * *"
+    }
+  ],
+  "functions": {
+    "api/cron-meet-alfred-auto-send.ts": {
+      "maxDuration": 300
+    }
+  },
   "routes": [
     { "handle": "filesystem" },
     { "src": "/.*", "dest": "/index.html" }
