@@ -15,7 +15,77 @@ const log = createLogger("lib/meetAlfredAutoSend");
 
 const PAGE_SIZE = 100;
 
-/** Matches the manual UI filter preset shown in the enriched contacts page. */
+/** `all_jobs` must contain at least one of these titles (OR match, case-insensitive substring). */
+export const MEET_ALFRED_CRON_JOB_TITLES = [
+  "Senior Software Engineer",
+  "Cloud Engineer",
+  "Front End Software Engineer",
+  "Infrastructure Engineer",
+  "Backend Engineer",
+  "Software Developer",
+  "Software Engineer",
+  "Azure Developer",
+  ".NET Developer",
+  "Forward Deployed Engineer",
+  "Platform Engineer",
+  "Data Engineer",
+  "QA Engineer",
+  "Web Developer",
+  "AI/ML Engineer",
+  "Frontend Engineer",
+  "Full-stack Software Engineer",
+  "Full-stack Developer",
+  "Fullstack Software Engineer",
+  "Fullstack Developer",
+  "Integration Engineer",
+  "Automation Tester",
+  "Systems Administrator",
+  "Artificial Intelligence Engineer",
+  "LLM Engineer",
+  "Full Stack Developer",
+  "QA Automation",
+  "Founding Engineer",
+  "Solutions Architect",
+  "Cloud Platform Engineer",
+  "Product Engineer",
+  "iOS Developer",
+  "Android Developer",
+  "Full Stack Engineer",
+  "Programmer",
+  "ML Engineer",
+  "Software Architect",
+  "Site Reliability Engineer",
+  "Data Analyst",
+  "Solutions Engineer",
+  "Software Test Engineer",
+  "Software Engineering",
+  "Cloud Architect",
+  "Systems Engineer",
+  "DevSecOps Engineer",
+  "Python Developer",
+  "Tech Lead",
+  "Quality Assurance Engineer",
+  "Database Architect",
+  "DBA",
+  "Database Developer",
+  "Full-stack Web Developer",
+  "AI Developer",
+  "Machine Learning Engineer",
+] as const;
+
+/** `contacts.title` must contain at least one of these (OR match, case-insensitive substring). */
+export const MEET_ALFRED_CRON_CONTACT_TITLES = [
+  "Chief Operating Officer",
+  "Managing Director",
+  "Founder",
+  "Cofounder",
+  "CEO",
+  "Chief Executive Officer",
+  "Chief Technology Officer",
+  "CTO",
+] as const;
+
+/** Matches the manual UI filter preset for Meet Alfred auto-send. */
 export const MEET_ALFRED_CRON_FILTERS: EnrichedServerFilters = {
   status: "approved",
   meetAlfredAdded: "not_added",
@@ -27,8 +97,8 @@ export const MEET_ALFRED_CRON_FILTERS: EnrichedServerFilters = {
   contactNameContainsSpace: false,
   sourceCountries: ["Australia", "United States", "United Kingdom"],
   latestJobPosted: "1w",
-  jobTitles: [],
-  contactTitles: [],
+  jobTitles: [...MEET_ALFRED_CRON_JOB_TITLES],
+  contactTitles: [...MEET_ALFRED_CRON_CONTACT_TITLES],
 };
 
 export async function listAllEnrichedContactsMatching(
@@ -69,7 +139,9 @@ export async function runMeetAlfredAutoSend(input?: {
   connectionStringOverride?: string;
 }): Promise<MeetAlfredAutoSendResult> {
   const filters = input?.filters ?? MEET_ALFRED_CRON_FILTERS;
-  const jobTitleFilterRaw = input?.jobTitleFilterRaw ?? "";
+  /** Same terms as list filter — used to pick matching job for Meet Alfred `csv_jobtitle`. */
+  const jobTitleFilterRaw =
+    input?.jobTitleFilterRaw ?? (filters.jobTitles ?? []).join("\n");
   const connectionStringOverride = input?.connectionStringOverride;
 
   log.info("runMeetAlfredAutoSend start", { filters });
